@@ -408,6 +408,31 @@ export type StringRunner<
   _expression extends string,
 > = (...values: readonly unknown[]) => unknown;
 
+/** Runtime-only expression runner returned by {@link Interpreter.raw}. */
+export type RawStringRunner = (...values: unknown[]) => unknown;
+
+/** Result of compiling a runtime-only expression with {@link Interpreter.raw}. */
+export type RawStringResult = RawStringRunner | InterpreterError;
+
+/** Error returned when a runtime-only expression cannot be compiled. */
+export class InterpreterError extends Error {
+  /** Short user-facing description of what went wrong. */
+  readonly summary: string;
+  /** Original error that produced this interpreter error. */
+  override readonly cause: unknown;
+
+  /** Create an interpreter error with a short summary and optional cause. */
+  constructor(
+    summary: string,
+    options: { readonly cause?: unknown } = {},
+  ) {
+    super(summary);
+    this.name = "InterpreterError";
+    this.summary = summary;
+    this.cause = options.cause;
+  }
+}
+
 /** Custom hook for applying an operator during expression evaluation. */
 export type InterpreterApplyOperator = (
   operator: RuntimeOperator,
@@ -427,6 +452,8 @@ export type Interpreter<operators extends OperatorRegistry> = {
     token: token,
   ): operators[token];
   get(token: string): OperatorEntry | undefined;
+  /** Create a reusable runner from a dynamic expression string. */
+  raw(expression: string): RawStringResult;
   <
     const expression extends string,
     const rest extends readonly unknown[],
@@ -465,6 +492,25 @@ export function interpreter<const operators extends OperatorRegistry>(
     },
     enumerable: false,
   });
+  Object.defineProperty(interpreter, "raw", {
+    value(expression: string): RawStringResult {
+      const error = validate_raw_string_expression(operators, expression);
+
+      if (error !== undefined) {
+        return error;
+      }
+
+      return (...substitutions: unknown[]) => {
+        return evaluate_string_expression(
+          operators,
+          expression,
+          substitutions,
+          options,
+        );
+      };
+    },
+    enumerable: false,
+  });
 
   return interpreter;
 }
@@ -492,8 +538,11 @@ export type RuntimeOperator = {
 type TokenizeContext = {
   readonly scope: unknown;
   readonly values: readonly unknown[];
+  readonly resolve_references: boolean;
   value_index: number;
 };
+
+const raw_validation_value = Symbol("itp.raw.validation.value");
 
 function interpret_string_expression(
   operators: OperatorRegistry,
@@ -527,6 +576,7 @@ function evaluate_string_expression(
   const context: TokenizeContext = {
     scope,
     values,
+    resolve_references: true,
     value_index: 0,
   };
 
@@ -537,6 +587,48 @@ function evaluate_string_expression(
   }
 
   return result;
+}
+
+function validate_raw_string_expression(
+  operators: OperatorRegistry,
+  expression: string,
+): InterpreterError | undefined {
+  const context: TokenizeContext = {
+    scope: undefined,
+    values: [],
+    resolve_references: false,
+    value_index: 0,
+  };
+
+  try {
+    evaluate_text(operators, expression, context, {
+      apply_operator() {
+        return raw_validation_value;
+      },
+    });
+  } catch (error) {
+    return interpreter_error_from(error);
+  }
+
+  return undefined;
+}
+
+function interpreter_error_from(error: unknown): InterpreterError {
+  if (error instanceof InterpreterError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new InterpreterError(summarize_error_message(error.message), {
+      cause: error,
+    });
+  }
+
+  return new InterpreterError(String(error), { cause: error });
+}
+
+function summarize_error_message(message: string): string {
+  return message.replace(/^interpreter\s+/, "");
 }
 
 function evaluate_text(
@@ -695,6 +787,15 @@ function read_reference(
   const indexed = read_indexed_reference(text, reference);
 
   if (indexed !== undefined) {
+    if (!context.resolve_references) {
+      context.value_index = Math.max(context.value_index, indexed.index + 1);
+
+      return {
+        value: raw_validation_value,
+        next: indexed.next,
+      };
+    }
+
     if (indexed.index >= context.values.length) {
       throw new TypeError(
         "interpreter expression is missing a value for placeholder `?" +
@@ -710,6 +811,12 @@ function read_reference(
   const name = read_identifier(text, reference);
 
   if (name === undefined) {
+    if (!context.resolve_references) {
+      context.value_index += 1;
+
+      return { value: raw_validation_value, next: index + 1 };
+    }
+
     if (context.value_index >= context.values.length) {
       throw new TypeError(
         "interpreter expression is missing a value for placeholder `" +
@@ -721,6 +828,13 @@ function read_reference(
     context.value_index += 1;
 
     return { value, next: index + 1 };
+  }
+
+  if (!context.resolve_references) {
+    return {
+      value: raw_validation_value,
+      next: name.next,
+    };
   }
 
   return {

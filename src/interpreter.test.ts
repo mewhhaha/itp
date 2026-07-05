@@ -5,11 +5,13 @@ import {
   get_operator_from,
   has_operator_kind,
   interpreter,
+  InterpreterError,
   itp,
   number_operator,
   number_unary_operator,
   operator,
   operators,
+  type RawStringRunner,
   standard_operators,
   type StandardOperators,
   string_operator,
@@ -21,6 +23,17 @@ Deno.test("interpreter evaluates registered infix operators with precedence", ()
   assert_equals(itp("2 + 3 * 4"), 14);
   assert_equals(itp("10 - 3 - 2"), 5);
   assert_equals(itp("true || false && false"), true);
+});
+
+Deno.test("interpreter accepts plain registry objects", () => {
+  const word_itp = interpreter({
+    add: number_operator(6, "left", add),
+    neg: number_unary_operator(8, (value) => -value),
+  });
+
+  assert_equals(word_itp("20 add 22"), 42);
+  assert_equals(word_itp("neg 42"), -42);
+  assert_equals(word_itp.get("add"), word_itp.operators.add);
 });
 
 Deno.test("interpreter accepts whitespace wherever token boundaries allow it", () => {
@@ -80,6 +93,84 @@ Deno.test("interpreter supports placeholders named references and runners", () =
   assert_equals(itp("?0 + ?left", { left: 22 }, 20), 42);
   assert_equals(itp("?left + ?", { left: 20 }, 22), 42);
   assert_equals(named_runner({ left: 20 }, 22), 42);
+});
+
+Deno.test("interpreter raw creates runners from dynamic expression strings", () => {
+  const double_expression: string = "?0 + ?0";
+  const double = assert_raw_runner(itp.raw(double_expression));
+  const named = assert_raw_runner(itp.raw("?left + ?"));
+  const literal = assert_raw_runner(itp.raw("1 + 2 * 3"));
+
+  assert_equals(double(21), 42);
+  assert_equals(named({ left: 20 }, 22), 42);
+  assert_equals(literal(), 7);
+  assert_equals(
+    assert_raw_runner(itp.raw('"hello" ++ " " ++ ?'))("world"),
+    "hello world",
+  );
+  assert_type_error_message(
+    () => named({}, 22),
+    "scope is missing `left`",
+    "raw runners should still report runtime argument errors",
+  );
+});
+
+Deno.test("interpreter raw returns errors for invalid dynamic strings", () => {
+  const trailing = itp.raw("1 +");
+  const unknown = itp.raw("? ** ?");
+  const bad_group = itp.raw("(1 + 2");
+  const bad_placeholder = itp.raw("?999999999999999999999");
+
+  assert_true(
+    trailing instanceof Error,
+    "raw errors should still be Error instances",
+  );
+  assert_equals(
+    assert_raw_error(trailing, "trailing operators should fail raw").summary,
+    "expression is missing a value",
+  );
+  assert_equals(
+    assert_raw_error(unknown, "unknown operators should fail raw").summary,
+    "expected a registered operator at `** ?`",
+  );
+  assert_equals(
+    assert_raw_error(bad_group, "unclosed groups should fail raw").summary,
+    "expression is missing `)`",
+  );
+  assert_equals(
+    assert_raw_error(
+      bad_placeholder,
+      "unsafe placeholder indexes should fail raw",
+    ).summary,
+    "placeholder index `999999999999999999999` is too large",
+  );
+  assert_true(
+    assert_raw_error(trailing, "trailing operators should fail raw")
+      .cause instanceof
+      TypeError,
+    "raw errors should retain the underlying cause",
+  );
+});
+
+Deno.test("interpreter raw validates syntax without operand type checks", () => {
+  const string_plus = itp.raw('"hello" + "world"');
+  const dynamic_number = itp.raw("? + ?");
+
+  assert_true(
+    !(string_plus instanceof Error),
+    "raw should not run operator type checks during validation",
+  );
+  assert_true(
+    !(dynamic_number instanceof Error),
+    "placeholder operators should validate without concrete values",
+  );
+  const string_plus_runner = assert_raw_runner(string_plus);
+
+  assert_type_error_message(
+    () => string_plus_runner(),
+    "expected a number",
+    "operator type errors should still happen when raw runners execute",
+  );
 });
 
 Deno.test("interpreter uses only the operators registered on the instance", () => {
@@ -502,6 +593,7 @@ Deno.test("interpreter apply hooks can replace standard operator semantics", () 
 
   assert_equals(traced("1 + 2"), "1:2");
   assert_equals(traced("-?0", 42), -42);
+  assert_equals(assert_raw_runner(traced.raw("1 + 2"))(), "1:2");
 });
 
 const expect_interpreter_type_errors = () => {
@@ -549,4 +641,23 @@ function assert_type_error_message(
   message: string,
 ): void {
   assert_true(catch_type_error(fn).message.includes(expected), message);
+}
+
+function assert_raw_runner(value: RawStringRunner | Error): RawStringRunner {
+  if (value instanceof Error) {
+    throw value;
+  }
+
+  return value;
+}
+
+function assert_raw_error(
+  value: RawStringRunner | Error,
+  message: string,
+): InterpreterError {
+  if (value instanceof InterpreterError) {
+    return value;
+  }
+
+  throw new Error(message);
 }

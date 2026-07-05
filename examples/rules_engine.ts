@@ -4,11 +4,10 @@ import {
   boolean_unary_operator,
   equality_operator,
   interpreter,
-  operators,
   ordering_operator,
 } from "../mod.ts";
 
-const rules = interpreter(operators({
+const rules = interpreter({
   above: ordering_operator((left, right) => left > right),
   at_least: ordering_operator((left, right) => left >= right),
   below: ordering_operator((left, right) => left < right),
@@ -17,7 +16,7 @@ const rules = interpreter(operators({
   and: boolean_operator(3, "right", (left, right) => left && right),
   or: boolean_operator(2, "right", (left, right) => left || right),
   not: boolean_unary_operator(5, (value) => !value),
-}));
+});
 
 const approve_enterprise_order = rules(
   "?amount above 10000 and ?country in ?allowed_countries and not ?manual_hold",

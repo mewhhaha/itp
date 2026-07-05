@@ -60,17 +60,38 @@ the first and second positional values.
 ## `interpreter`
 
 ```ts
-const calc = interpreter(registry, options);
+const calc = interpreter({
+  add: number_operator(6, "left", (left, right) => left + right),
+  neg: number_unary_operator(8, (value) => -value),
+}, options);
 ```
 
-Creates a callable interpreter from the supplied operator registry. The returned
-value also exposes:
+Creates a callable interpreter from the supplied operator registry. You can pass
+a plain object directly; `operators(...)` is only needed when you want to define
+and validate a reusable registry separately. The returned value also exposes:
 
 - `calc.operators`
 - `calc.get(token)`
+- `calc.raw(expression)`
 
 Operator tokens are not copied onto the callable interpreter as properties. This
 keeps tokens such as `get`, `name`, and `length` safe to use in a registry.
+
+`raw` is for expressions that are only known at runtime, such as user-authored
+DSL strings. It returns either an `InterpreterError` or a function with
+`(...args: unknown[]) => unknown` instead of using literal-type syntax checks:
+
+```ts
+const expression_from_user: string = "?0 + ?0";
+const double = calc.raw(expression_from_user);
+
+if (double instanceof Error) {
+  console.error(double.summary);
+  throw double;
+}
+
+double(21); // 42
+```
 
 `options.apply_operator` can replace the default operator application step:
 
@@ -136,7 +157,9 @@ Helper constructors:
 
 ## Registry Helpers
 
-`operators` preserves literal token types for custom registries:
+`operators` validates a registry while preserving literal token types. It is
+useful when a registry is shared, exported, or composed before being passed to
+`interpreter(...)`:
 
 ```ts
 const registry = operators({

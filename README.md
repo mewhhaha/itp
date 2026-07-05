@@ -37,6 +37,22 @@ add(20, 22); // 42
 add(1, 2); // 3
 ```
 
+For expressions that come from a runtime source, use `raw`. It skips literal
+type checking and returns either a reusable function or an `Error` with a
+`summary`:
+
+```ts
+const expression_from_user: string = "?0 + ?0";
+const double = itp.raw(expression_from_user);
+
+if (double instanceof Error) {
+  console.error(double.summary);
+  throw double;
+}
+
+double(21); // 42
+```
+
 Named placeholders read from the first value:
 
 ```ts
@@ -69,10 +85,9 @@ import {
   number_operator,
   number_unary_operator,
   operator,
-  operators,
 } from "jsr:@mewhhaha/itp";
 
-const words = interpreter(operators({
+const words = interpreter({
   add: number_operator(6, "left", (left, right) => left + right),
   mul: number_operator(7, "left", (left, right) => left * right),
   neg: number_unary_operator(8, (value) => -value),
@@ -80,7 +95,7 @@ const words = interpreter(operators({
     number_operator(6, "left", (left, right) => left + right),
     number_unary_operator(8, (value) => -value),
   ),
-}));
+});
 
 words("2 add 3 mul 4"); // 14
 words("? add ?", 20, 22); // 42
@@ -96,7 +111,6 @@ import {
   type BinaryOperatorDefinition,
   type InfixDirection,
   interpreter,
-  operators,
   type UnaryOperatorDefinition,
 } from "jsr:@mewhhaha/itp";
 
@@ -133,7 +147,7 @@ const unary_function: Guard<UnaryFunction> = (
   return typeof value === "function";
 };
 
-const functions = interpreter(operators({
+const functions = interpreter({
   then: checked_binary(
     "pipe",
     1,
@@ -142,7 +156,7 @@ const functions = interpreter(operators({
     unary_function,
     (value, fn) => fn(value),
   ),
-}));
+});
 
 const trim = (value: unknown) => String(value).trim();
 const shout = (value: unknown) => String(value).toUpperCase() + "!";
@@ -186,7 +200,7 @@ const point: Guard<Point> = (value): value is Point => {
   return typeof candidate.x === "number" && typeof candidate.y === "number";
 };
 
-const geometry = interpreter(operators({
+const geometry = interpreter({
   near: checked_binary(
     "geometry",
     4,
@@ -198,7 +212,7 @@ const geometry = interpreter(operators({
   quadrant: checked_unary("geometry", 8, point, (value) => {
     return value.x >= 0 && value.y >= 0 ? "NE" : "other";
   }),
-}));
+});
 
 geometry("?from near ?to", {
   from: { x: 0, y: 0 },
@@ -227,7 +241,10 @@ for placeholders, and quotes are reserved for string literals.
   boolean operators.
 - `interpreter(registry, options?)` creates a callable interpreter from an
   operator registry.
-- `operators(registry)` preserves literal token types for custom registries.
+- `interpreter(...).raw(expression)` creates a runtime expression runner or
+  returns an `InterpreterError` with a `summary` when the expression is invalid.
+- `operators(registry)` validates and preserves a reusable registry when you
+  want to define it separately from `interpreter(...)`.
 - `operator(definition, ...overloads)` preserves a single operator definition or
   builds an overload set for tokens with unary and binary forms.
 - `number_operator`, `number_unary_operator`, `string_operator`,

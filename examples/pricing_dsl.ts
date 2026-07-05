@@ -1,17 +1,12 @@
-import {
-  interpreter,
-  number_operator,
-  number_unary_operator,
-  operators,
-} from "../mod.ts";
+import { interpreter, number_operator, number_unary_operator } from "../mod.ts";
 
-const pricing = interpreter(operators({
+const pricing = interpreter({
   plus: number_operator(6, "left", (left, right) => left + right),
   minus: number_operator(6, "left", (left, right) => left - right),
   times: number_operator(7, "left", (left, right) => left * right),
   over: number_operator(7, "left", (left, right) => left / right),
   pct: number_unary_operator(8, (value) => value / 100),
-}));
+});
 
 const quote = {
   base: 5_000,

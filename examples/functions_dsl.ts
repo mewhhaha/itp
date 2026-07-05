@@ -2,7 +2,6 @@ import {
   type BinaryOperatorDefinition,
   type InfixDirection,
   interpreter,
-  operators,
   type UnaryOperatorDefinition,
 } from "../mod.ts";
 
@@ -28,7 +27,7 @@ const point: Guard<Point> = (value): value is Point => {
   return typeof candidate.x === "number" && typeof candidate.y === "number";
 };
 
-const functions = interpreter(operators({
+const functions = interpreter({
   then: checked_binary(
     "pipe",
     1,
@@ -48,7 +47,7 @@ const functions = interpreter(operators({
   quadrant: checked_unary("geometry", 8, point, (value) => {
     return value.x >= 0 && value.y >= 0 ? "NE" : "other";
   }),
-}));
+});
 
 const trim = (value: unknown) => String(value).trim();
 const shout = (value: unknown) => String(value).toUpperCase() + "!";
