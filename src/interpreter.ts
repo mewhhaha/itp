@@ -1,6 +1,7 @@
 import {
   get_operator_from,
   type OperatorDefinition,
+  type OperatorEntry,
   type OperatorRegistry,
   operators as operator_registry,
   standard_operators,
@@ -78,6 +79,14 @@ type Identifier<text extends string> = text extends
   : false
   : false;
 
+type Digits<text extends string> = text extends "" ? false
+  : text extends `${Digit}${infer rest}` ? DigitRest<rest>
+  : false;
+
+type DigitRest<text extends string> = text extends "" ? true
+  : text extends `${Digit}${infer rest}` ? DigitRest<rest>
+  : false;
+
 type TrimLeft<text extends string> = text extends `${Whitespace}${infer rest}`
   ? TrimLeft<rest>
   : text;
@@ -136,16 +145,56 @@ type OperatorToken<operators extends OperatorRegistry> =
   & keyof operators
   & string;
 
+type OperatorEntryHasArity<entry, arity extends 1 | 2> = entry extends
+  { readonly arity: arity } ? true
+  : entry extends readonly unknown[]
+    ? Extract<entry[number], { readonly arity: arity }> extends never ? false
+    : true
+  : false;
+
+type OperatorTokenWithArity<
+  operators extends OperatorRegistry,
+  arity extends 1 | 2,
+> = {
+  [operator in keyof operators & string]: OperatorEntryHasArity<
+    operators[operator],
+    arity
+  > extends true ? operator
+    : never;
+}[keyof operators & string];
+
 type ParenthesizedOperatorToken<
   operators extends OperatorRegistry,
   operator = OperatorToken<operators>,
 > = operator extends string ? `(${operator})`
   : never;
 
+type ReferenceSyntax<reference extends string> = Digits<Trim<reference>> extends
+  true ? true
+  : Identifier<Trim<reference>>;
+
 type StringOperandSyntax<operators extends OperatorRegistry, operand> =
+  ValueStringSyntax<operators, operand> extends true ? true
+    : operand extends string
+      ? [UnaryStringSyntax<operators, Trim<operand>>] extends [never] ? false
+      : true
+    : false;
+
+type UnaryStringSyntax<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 1>,
+> = operator extends string
+  ? Trim<expression> extends `${operator}${infer operand}`
+    ? StringOperandSyntax<operators, operand> extends true ? true
+    : never
+  : never
+  : never;
+
+type ValueStringSyntax<operators extends OperatorRegistry, operand> =
   operand extends string ? Trim<operand> extends "" ? false
     : Trim<operand> extends "?" ? true
-    : Trim<operand> extends `?${infer name}` ? Identifier<Trim<name>>
+    : Trim<operand> extends `?${infer reference}` ? ReferenceSyntax<reference>
     : Trim<operand> extends `${number}` ? true
     : Trim<operand> extends "true" | "false" ? true
     : StringLiteral<Trim<operand>> extends true ? true
@@ -159,13 +208,69 @@ type StringOperandSyntax<operators extends OperatorRegistry, operand> =
 type BinaryStringSyntax<
   operators extends OperatorRegistry,
   expression extends string,
-  operator = OperatorToken<operators>,
+  operator = OperatorTokenWithArity<operators, 2>,
 > = operator extends string
-  ? Trim<expression> extends `${infer left}${operator}${infer right}`
-    ? OperatorBoundary<operator, left, right> extends true
-      ? BinaryStringTailSyntax<operators, left, right>
+  ? BinaryStringSyntaxForOperator<operators, Trim<expression>, operator>
+  : never;
+
+type BinaryStringSyntaxForOperator<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator extends string,
+  prefix extends string = "",
+> = expression extends `${infer left}${operator}${infer right}`
+  ? OperatorBoundary<operator, `${prefix}${left}`, right> extends true
+    ? BinaryStringTailSyntax<operators, `${prefix}${left}`, right> extends
+      infer syntax ? [syntax] extends [never] ? BinaryStringSyntaxForOperator<
+          operators,
+          right,
+          operator,
+          `${prefix}${left}${operator}`
+        >
+      : syntax
     : never
-  : never
+  : BinaryStringSyntaxForOperator<
+    operators,
+    right,
+    operator,
+    `${prefix}${left}${operator}`
+  >
+  : never;
+
+type BinaryStringHasReference<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 2>,
+> = operator extends string
+  ? BinaryStringHasReferenceForOperator<operators, Trim<expression>, operator>
+  : never;
+
+type BinaryStringHasReferenceForOperator<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator extends string,
+  prefix extends string = "",
+> = expression extends `${infer left}${operator}${infer right}`
+  ? OperatorBoundary<operator, `${prefix}${left}`, right> extends true
+    ? BinaryStringTailSyntax<operators, `${prefix}${left}`, right> extends
+      infer syntax
+      ? [syntax] extends [never] ? BinaryStringHasReferenceForOperator<
+          operators,
+          right,
+          operator,
+          `${prefix}${left}${operator}`
+        >
+      : Or<
+        StringOperandHasReference<operators, `${prefix}${left}`>,
+        ValueExpressionHasReference<operators, right>
+      >
+    : never
+  : BinaryStringHasReferenceForOperator<
+    operators,
+    right,
+    operator,
+    `${prefix}${left}${operator}`
+  >
   : never;
 
 type BinaryStringTailSyntax<
@@ -204,8 +309,29 @@ type Or<left, right> = left extends true ? true
 type StringOperandHasReference<
   operators extends OperatorRegistry,
   operand,
+> = ValueStringSyntax<operators, operand> extends true
+  ? ValueStringHasReference<operators, operand>
+  : operand extends string
+    ? [UnaryStringHasReference<operators, Trim<operand>>] extends [never]
+      ? false
+    : UnaryStringHasReference<operators, Trim<operand>>
+  : false;
+
+type UnaryStringHasReference<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 1>,
+> = operator extends string
+  ? Trim<expression> extends `${operator}${infer operand}`
+    ? StringOperandHasReference<operators, operand>
+  : never
+  : never;
+
+type ValueStringHasReference<
+  operators extends OperatorRegistry,
+  operand,
 > = operand extends string ? Trim<operand> extends "?" ? true
-  : Trim<operand> extends `?${infer name}` ? Identifier<Trim<name>>
+  : Trim<operand> extends `?${infer reference}` ? ReferenceSyntax<reference>
   : Trim<operand> extends `${number}` ? false
   : Trim<operand> extends "true" | "false" ? false
   : StringLiteral<Trim<operand>> extends true ? false
@@ -214,20 +340,6 @@ type StringOperandHasReference<
     ? StringExpressionHasReference<operators, expression>
   : false
   : false;
-
-type BinaryStringHasReference<
-  operators extends OperatorRegistry,
-  expression extends string,
-  operator = OperatorToken<operators>,
-> = operator extends string
-  ? Trim<expression> extends `${infer left}${operator}${infer right}`
-    ? OperatorBoundary<operator, left, right> extends true ? Or<
-        StringOperandHasReference<operators, left>,
-        ValueExpressionHasReference<operators, right>
-      >
-    : never
-  : never
-  : never;
 
 type ValueExpressionHasReference<
   operators extends OperatorRegistry,
@@ -277,8 +389,7 @@ export type StringRunner<
 /** Custom hook for applying an operator during expression evaluation. */
 export type InterpreterApplyOperator = (
   operator: RuntimeOperator,
-  left: unknown,
-  right: unknown,
+  ...operands: readonly unknown[]
 ) => unknown;
 
 /** Runtime options for a string interpreter. */
@@ -293,7 +404,7 @@ export type Interpreter<operators extends OperatorRegistry> = {
   get<const token extends keyof operators & string>(
     token: token,
   ): operators[token];
-  get(token: string): OperatorDefinition | undefined;
+  get(token: string): OperatorEntry | undefined;
   <
     const expression extends string,
     const rest extends readonly unknown[],
@@ -388,7 +499,7 @@ function evaluate_string_expression(
   substitutions: readonly unknown[],
   options: InterpreterOptions,
 ): unknown {
-  const has_named_references = has_named_reference(expression);
+  const has_named_references = has_named_reference(operators, expression);
   const scope = has_named_references ? substitutions[0] : undefined;
   const values = has_named_references ? substitutions.slice(1) : substitutions;
   const context: TokenizeContext = {
@@ -436,6 +547,18 @@ function tokenize_text(
     }
 
     if (expecting_value) {
+      const operator = read_operator(operators, text, index, 1, false);
+
+      if (operator !== undefined) {
+        tokens.push({
+          kind: "operator",
+          token: operator.token,
+          definition: operator.definition,
+        });
+        index = operator.next;
+        continue;
+      }
+
       const value = read_value(operators, text, index, context, options);
 
       if (value === undefined) {
@@ -450,7 +573,7 @@ function tokenize_text(
       continue;
     }
 
-    const operator = read_operator(operators, text, index);
+    const operator = read_operator(operators, text, index, 2, true);
 
     if (operator === undefined) {
       throw new TypeError(
@@ -501,13 +624,13 @@ function read_parenthesized_operator_value(
     return undefined;
   }
 
-  const operator = read_operator(operators, text, index + 1);
+  const operator = read_operator_entry(operators, text, index + 1);
 
   if (operator === undefined || text[operator.next] !== ")") {
     return undefined;
   }
 
-  return { value: operator.definition, next: operator.next + 1 };
+  return { value: operator.entry, next: operator.next + 1 };
 }
 
 function read_parenthesized_expression(
@@ -546,7 +669,23 @@ function read_reference(
   index: number,
   context: TokenizeContext,
 ): { readonly value: unknown; readonly next: number } {
-  const name = read_identifier(text, index + 1);
+  const reference = index + 1;
+  const indexed = read_indexed_reference(text, reference);
+
+  if (indexed !== undefined) {
+    if (indexed.index >= context.values.length) {
+      throw new TypeError(
+        "interpreter expression is missing a value for placeholder `?" +
+          indexed.raw + "`",
+      );
+    }
+
+    context.value_index = Math.max(context.value_index, indexed.index + 1);
+
+    return { value: context.values[indexed.index], next: indexed.next };
+  }
+
+  const name = read_identifier(text, reference);
 
   if (name === undefined) {
     if (context.value_index >= context.values.length) {
@@ -659,6 +798,30 @@ function escaped_character(escape: string): string {
   }
 }
 
+function read_indexed_reference(
+  text: string,
+  index: number,
+):
+  | { readonly index: number; readonly raw: string; readonly next: number }
+  | undefined {
+  const match = /^\d+/.exec(text.slice(index));
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const raw = match[0];
+  const value = Number(raw);
+
+  if (!Number.isSafeInteger(value)) {
+    throw new TypeError(
+      "interpreter placeholder index `" + raw + "` is too large",
+    );
+  }
+
+  return { index: value, raw, next: index + raw.length };
+}
+
 function read_identifier(
   text: string,
   index: number,
@@ -676,6 +839,8 @@ function read_operator(
   operators: OperatorRegistry,
   text: string,
   index: number,
+  arity: 1 | 2,
+  check_boundary: boolean,
 ):
   | {
     readonly token: string;
@@ -686,17 +851,68 @@ function read_operator(
   for (const token of operator_tokens(operators)) {
     if (
       text.startsWith(token, index) &&
-      has_operator_boundary(text, index, token)
+      (!check_boundary || has_operator_boundary(text, index, token))
     ) {
+      const definition = operator_definition_for_arity(operators[token], arity);
+
+      if (definition === undefined) {
+        continue;
+      }
+
       return {
         token,
-        definition: operators[token],
+        definition,
         next: index + token.length,
       };
     }
   }
 
   return undefined;
+}
+
+function read_operator_entry(
+  operators: OperatorRegistry,
+  text: string,
+  index: number,
+):
+  | {
+    readonly token: string;
+    readonly entry: OperatorEntry;
+    readonly next: number;
+  }
+  | undefined {
+  for (const token of operator_tokens(operators)) {
+    if (
+      text.startsWith(token, index) &&
+      has_operator_boundary(text, index, token)
+    ) {
+      return {
+        token,
+        entry: operators[token],
+        next: index + token.length,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function operator_definition_for_arity(
+  entry: OperatorEntry,
+  arity: 1 | 2,
+): OperatorDefinition | undefined {
+  if (!is_operator_overloads(entry)) {
+    return entry.arity === arity ? entry : undefined;
+  }
+
+  return entry.find((definition) => definition.arity === arity);
+}
+
+function is_operator_overloads(entry: OperatorEntry): entry is readonly [
+  OperatorDefinition,
+  ...OperatorDefinition[],
+] {
+  return Array.isArray(entry);
 }
 
 function operator_tokens(operators: OperatorRegistry): readonly string[] {
@@ -808,12 +1024,20 @@ function should_apply_operator(
   previous: RuntimeOperator,
   next: RuntimeOperator,
 ): boolean {
+  if (next.definition.arity === 1) {
+    return false;
+  }
+
   if (previous.definition.precedence > next.definition.precedence) {
     return true;
   }
 
   if (previous.definition.precedence < next.definition.precedence) {
     return false;
+  }
+
+  if (previous.definition.arity === 1) {
+    return true;
   }
 
   if (previous.definition.direction !== next.definition.direction) {
@@ -845,28 +1069,47 @@ function apply_operator_token(
     throw new TypeError("interpreter expression is missing an operator");
   }
 
-  if (values.length < 2) {
-    throw new TypeError("interpreter expression is missing a value");
+  switch (operator.definition.arity) {
+    case 1: {
+      if (values.length < 1) {
+        throw new TypeError("interpreter expression is missing a value");
+      }
+
+      const value = values.pop();
+
+      values.push(apply_operator_value(operator, [value], options));
+      break;
+    }
+    case 2: {
+      if (values.length < 2) {
+        throw new TypeError("interpreter expression is missing a value");
+      }
+
+      const right = values.pop();
+      const left = values.pop();
+
+      values.push(apply_operator_value(operator, [left, right], options));
+      break;
+    }
   }
-
-  const right = values.pop();
-  const left = values.pop();
-
-  values.push(apply_operator_value(operator, left, right, options));
 }
 
 function apply_operator_value(
   operator: RuntimeOperator,
-  left: unknown,
-  right: unknown,
+  operands: readonly unknown[],
   options: InterpreterOptions,
 ): unknown {
   try {
     if (options.apply_operator !== undefined) {
-      return options.apply_operator(operator, left, right);
+      return options.apply_operator(operator, ...operands);
     }
 
-    return operator.definition.apply(left, right);
+    switch (operator.definition.arity) {
+      case 1:
+        return operator.definition.apply(operands[0]);
+      case 2:
+        return operator.definition.apply(operands[0], operands[1]);
+    }
   } catch (error) {
     if (error instanceof TypeError) {
       throw new TypeError(
@@ -903,6 +1146,13 @@ function has_reference(
     }
 
     if (expecting_value) {
+      const prefix = read_operator(operators, expression, index, 1, false);
+
+      if (prefix !== undefined) {
+        index = prefix.next;
+        continue;
+      }
+
       if (expression[index] === "?") {
         return true;
       }
@@ -946,7 +1196,7 @@ function has_reference(
       return false;
     }
 
-    const operator = read_operator(operators, expression, index);
+    const operator = read_operator(operators, expression, index, 2, true);
 
     if (operator === undefined) {
       return false;
@@ -959,8 +1209,91 @@ function has_reference(
   return false;
 }
 
-function has_named_reference(expression: string): boolean {
-  return /\?[A-Za-z_$]/.test(expression);
+function has_named_reference(
+  operators: OperatorRegistry,
+  expression: string,
+): boolean {
+  let index = 0;
+  let expecting_value = true;
+
+  while (index < expression.length) {
+    index = skip_whitespace(expression, index);
+
+    if (index >= expression.length) {
+      return false;
+    }
+
+    if (expecting_value) {
+      const prefix = read_operator(operators, expression, index, 1, false);
+
+      if (prefix !== undefined) {
+        index = prefix.next;
+        continue;
+      }
+
+      if (expression[index] === "?") {
+        if (read_identifier(expression, index + 1) !== undefined) {
+          return true;
+        }
+
+        const indexed = read_indexed_reference(expression, index + 1);
+        index = indexed?.next ?? index + 1;
+        expecting_value = false;
+        continue;
+      }
+
+      const literal = read_literal(expression, index);
+
+      if (literal !== undefined) {
+        index = literal.next;
+        expecting_value = false;
+        continue;
+      }
+
+      const operator_value = read_parenthesized_operator_value(
+        operators,
+        expression,
+        index,
+      );
+
+      if (operator_value !== undefined) {
+        index = operator_value.next;
+        expecting_value = false;
+        continue;
+      }
+
+      if (expression[index] === "(") {
+        const close = find_closing_parenthesis(expression, index);
+
+        if (close === undefined) {
+          return false;
+        }
+
+        if (
+          has_named_reference(operators, expression.slice(index + 1, close))
+        ) {
+          return true;
+        }
+
+        index = close + 1;
+        expecting_value = false;
+        continue;
+      }
+
+      return false;
+    }
+
+    const operator = read_operator(operators, expression, index, 2, true);
+
+    if (operator === undefined) {
+      return false;
+    }
+
+    index = operator.next;
+    expecting_value = true;
+  }
+
+  return false;
 }
 
 function find_closing_parenthesis(

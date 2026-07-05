@@ -1,8 +1,11 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import {
+  boolean_unary_operator,
   interpreter,
   itp,
   number_operator,
+  number_unary_operator,
+  operator,
   operators,
   standard_operators,
   type StandardOperators,
@@ -17,14 +20,21 @@ Deno.test("interpreter evaluates registered infix operators with precedence", ()
 
 Deno.test("interpreter supports placeholders named references and runners", () => {
   const add = itp("? + ?");
+  const double_first = itp("?0 + ?0");
   const named = itp("?left + ?right * ?", {
     left: 2,
     right: 3,
   }, 4);
 
   assert_equals(add(20, 22), 42);
+  assert_equals(double_first(21), 42);
   assert_equals(named, 14);
   assert_equals(itp("? + ?", 20, 22), 42);
+  assert_equals(itp("?0 + ?0", 21), 42);
+  assert_equals(itp("?1 - ?0", 20, 62), 42);
+  assert_equals(itp("?2", "first", "second", "third"), "third");
+  assert_equals(itp("?0 + ?", 20, 22), 42);
+  assert_equals(itp("(?1 - ?0) * ?0", 2, 23), 42);
 });
 
 Deno.test("interpreter uses only the operators registered on the instance", () => {
@@ -101,6 +111,69 @@ Deno.test("interpreter supports custom symbolic operators", () => {
   assert_equals(itp.get("**"), undefined);
 });
 
+Deno.test("interpreter supports unary operators", () => {
+  assert_equals(itp("-?0", 42), -42);
+  assert_equals(itp("-(?0 + ?1)", 20, 22), -42);
+  assert_equals(itp("1 - -2"), 3);
+  assert_equals(itp("!false"), true);
+  assert_equals(itp("!!true"), true);
+  assert_equals(itp("!true == false"), true);
+  assert_equals(itp("(-)"), itp.get("-"));
+});
+
+Deno.test("interpreter supports custom unary operators and overloads", () => {
+  const custom_itp = interpreter(operators({
+    add: number_operator(6, "left", (left, right) => left + right),
+    neg: number_unary_operator(8, (value) => -value),
+    truthy: boolean_unary_operator(8, (value) => value),
+    "~": operator(
+      number_operator(6, "left", (left, right) => left + right),
+      number_unary_operator(8, (value) => -value),
+    ),
+  }));
+
+  assert_equals(custom_itp("neg ?0 add ?1", 20, 62), 42);
+  assert_equals(custom_itp("truthy true"), true);
+  assert_equals(custom_itp("~?0 ~ ?1", 20, 62), 42);
+  assert_equals(custom_itp("~?0", 42), -42);
+});
+
+Deno.test("operator registries reject duplicate arity overloads", () => {
+  assert_true(
+    catch_type_error(() =>
+      operators({
+        "-": operator(
+          number_operator(6, "left", add),
+          number_operator(7, "left", (left, right) => left * right),
+        ),
+      })
+    ).message.includes("more than one arity `2`"),
+    "overload sets should have at most one definition per arity",
+  );
+});
+
+Deno.test("interpreter apply hooks receive unary and binary operands", () => {
+  const seen: unknown[][] = [];
+  const traced = interpreter(standard_operators, {
+    apply_operator(operator, ...operands) {
+      seen.push([operator.token, ...operands]);
+
+      switch (operator.definition.arity) {
+        case 1:
+          return operator.definition.apply(operands[0]);
+        case 2:
+          return operator.definition.apply(operands[0], operands[1]);
+      }
+    },
+  });
+
+  assert_equals(traced("-?0 + ?1", 20, 62), 42);
+  assert_equals(seen, [
+    ["-", 20],
+    ["+", -20, 62],
+  ]);
+});
+
 Deno.test("interpreter treats parenthesized operator values as syntax", () => {
   const word_itp = interpreter(operators({
     add: number_operator(6, "left", (left, right) => left + right),
@@ -139,6 +212,7 @@ Deno.test("interpreter supports quoted strings and string concatenation", () => 
   assert_equals(itp("'it\\'s'"), "it's");
   assert_equals(itp('"say \\"hi\\""'), 'say "hi"');
   assert_equals(itp("'?'"), "?");
+  assert_equals(itp("'?name' ++ ?", "value"), "?namevalue");
   assert_true(
     catch_type_error(() => itp('"hello" + "world"')).message.includes(
       "expected a number",
@@ -149,6 +223,7 @@ Deno.test("interpreter supports quoted strings and string concatenation", () => 
 
 Deno.test("interpreter reports placeholder arity and preserves undefined values", () => {
   assert_equals(itp("?", undefined), undefined);
+  assert_equals(itp("?0", undefined), undefined);
   assert_equals(itp("? == ?", undefined, undefined), true);
   assert_true(
     catch_type_error(() => itp("?")()).message.includes(
@@ -163,8 +238,20 @@ Deno.test("interpreter reports placeholder arity and preserves undefined values"
     "missing later placeholder values should include the placeholder index",
   );
   assert_true(
+    catch_type_error(() => itp("?2", "first", "second")).message.includes(
+      "missing a value for placeholder `?2`",
+    ),
+    "missing indexed values should include the placeholder index",
+  );
+  assert_true(
     catch_type_error(() => itp("?", 1, 2)).message.includes("too many values"),
     "extra placeholder values should still be rejected",
+  );
+  assert_true(
+    catch_type_error(() => itp("?0 + ?0", 1, 2)).message.includes(
+      "too many values",
+    ),
+    "extra values after the highest indexed placeholder should be rejected",
   );
 });
 
