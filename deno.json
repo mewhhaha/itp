@@ -1,0 +1,33 @@
+{
+  "name": "@mewhhaha/itp",
+  "version": "0.1.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "publish": {
+    "include": [
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json",
+      "mod.ts",
+      "docs/**/*.md",
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/assert.ts",
+      "src/*.test.ts"
+    ]
+  },
+  "tasks": {
+    "ci": "deno task fmt:check && deno task lint && deno task doc:lint && deno task check && deno task test && deno task publish:dry-run",
+    "check": "deno check mod.ts src/*.test.ts",
+    "doc:lint": "deno doc --lint mod.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint",
+    "publish:dry-run": "deno publish --dry-run --allow-dirty",
+    "test": "deno test"
+  }
+}
