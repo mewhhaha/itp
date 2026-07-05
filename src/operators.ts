@@ -34,6 +34,8 @@ export type OperatorsByKind<
 export function operators<const registry extends OperatorRegistry>(
   registry: registry,
 ): registry {
+  validate_operator_registry(registry);
+
   return registry;
 }
 
@@ -42,6 +44,31 @@ export function operator<const definition extends OperatorDefinition>(
   definition: definition,
 ): definition {
   return definition;
+}
+
+function validate_operator_registry(registry: OperatorRegistry): void {
+  for (const token of Object.keys(registry)) {
+    validate_operator_token(token);
+  }
+}
+
+function validate_operator_token(token: string): void {
+  if (token.length === 0) {
+    throw new TypeError("operator token must not be empty");
+  }
+
+  if (/\s/.test(token)) {
+    throw new TypeError(
+      "operator token `" + token + "` must not contain whitespace",
+    );
+  }
+
+  if (/[()?'"]/.test(token)) {
+    throw new TypeError(
+      "operator token `" + token +
+        "` must not contain reserved syntax characters",
+    );
+  }
 }
 
 /** Look up an operator definition by token. */
@@ -149,6 +176,23 @@ export function boolean_operator(
   };
 }
 
+/** Create a string binary operator. */
+export function string_operator(
+  precedence: number,
+  direction: InfixDirection,
+  fn: (left: string, right: string) => string,
+): OperatorDefinition<"string"> {
+  return {
+    kind: "string",
+    precedence,
+    direction,
+    arity: 2,
+    apply(left, right) {
+      return fn(as_string(left), as_string(right));
+    },
+  };
+}
+
 /** Number operators included in {@link standard_operators}. */
 export type StandardNumberOperatorToken = "+" | "-" | "*" | "/" | "%";
 
@@ -161,12 +205,16 @@ export type StandardOrderingOperatorToken = "<" | "<=" | ">" | ">=";
 /** Boolean operators included in {@link standard_operators}. */
 export type StandardBooleanOperatorToken = "&&" | "||";
 
+/** String operators included in {@link standard_operators}. */
+export type StandardStringOperatorToken = "++";
+
 /** Any token included in {@link standard_operators}. */
 export type StandardOperatorToken =
   | StandardNumberOperatorToken
   | StandardEqualityOperatorToken
   | StandardOrderingOperatorToken
-  | StandardBooleanOperatorToken;
+  | StandardBooleanOperatorToken
+  | StandardStringOperatorToken;
 
 /** Registry type for the built-in operators. */
 export type StandardOperators =
@@ -181,10 +229,14 @@ export type StandardOperators =
   >
   & Readonly<
     Record<StandardBooleanOperatorToken, OperatorDefinition<"boolean">>
+  >
+  & Readonly<
+    Record<StandardStringOperatorToken, OperatorDefinition<"string">>
   >;
 
-/** Standard numeric, comparison, equality, and boolean operators. */
+/** Standard numeric, string, comparison, equality, and boolean operators. */
 export const standard_operators: StandardOperators = operators({
+  "++": string_operator(6, "left", (left, right) => left + right),
   "+": number_operator(6, "left", (left, right) => left + right),
   "-": number_operator(6, "left", (left, right) => left - right),
   "*": number_operator(7, "left", (left, right) => left * right),
@@ -214,4 +266,12 @@ function as_boolean(value: unknown): boolean {
   }
 
   throw new TypeError("operator expected a boolean");
+}
+
+function as_string(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  throw new TypeError("operator expected a string");
 }

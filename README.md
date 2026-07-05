@@ -21,6 +21,8 @@ itp("2 + 3 * 4"); // 14
 itp("10 - 3 - 2"); // 5
 itp("true || false && false"); // true
 itp("? + ?", 20, 22); // 42
+itp("(1 + 2) * 3"); // 9
+itp('"hello" ++ "world"'); // "helloworld"
 ```
 
 When a literal expression contains placeholders and no values are passed, the
@@ -67,15 +69,25 @@ Operator precedence follows the numeric `precedence` field: higher values bind
 more tightly. `direction` controls same-precedence associativity and can be
 `"left"`, `"right"`, or `"none"`.
 
+Operator tokens are stored on the interpreter registry and looked up with
+`get(token)`. Tokens are not copied onto the callable interpreter, so custom
+tokens can safely use names such as `length`, `name`, and `get`.
+
+Operator tokens must not be empty or contain whitespace, `(`, `)`, `?`, `"`, or
+`'`. Parentheses are reserved for grouping and operator values, `?` is reserved
+for placeholders, and quotes are reserved for string literals.
+
 ## API
 
-- `itp` is the default interpreter with numeric, equality, ordering, and boolean
-  operators.
+- `itp` is the default interpreter with numeric, string, equality, ordering, and
+  boolean operators.
 - `interpreter(registry, options?)` creates a callable interpreter from an
   operator registry.
 - `operators(registry)` preserves literal token types for custom registries.
-- `number_operator`, `equality_operator`, `ordering_operator`, and
-  `boolean_operator` create common operator definitions.
+- `operator(definition)` preserves a single operator definition's literal kind.
+- `number_operator`, `string_operator`, `equality_operator`,
+  `ordering_operator`, and `boolean_operator` create common operator
+  definitions.
 - `standard_operators` exposes the default operator registry.
 
 See [docs/api.md](docs/api.md) for more detail.

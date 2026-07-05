@@ -2,6 +2,7 @@ import {
   get_operator_from,
   type OperatorDefinition,
   type OperatorRegistry,
+  operators as operator_registry,
   standard_operators,
   type StandardOperators,
 } from "./operators.ts";
@@ -59,7 +60,6 @@ type OperatorSymbol =
   | "<"
   | "="
   | ">"
-  | "?"
   | "@"
   | "\\"
   | "^"
@@ -113,6 +113,25 @@ type OperatorBoundary<
 type StringSyntaxMessage<message extends string> =
   `interpreter string error: ${message}`;
 
+type StringEscape = "\\" | "'" | '"' | "n" | "r" | "t";
+
+type StringLiteralContent<
+  text extends string,
+  quote extends "'" | '"',
+> = text extends "" ? true
+  : text extends `\\${infer escaped}${infer rest}`
+    ? escaped extends StringEscape ? StringLiteralContent<rest, quote>
+    : false
+  : text extends `${quote}${string}` ? false
+  : text extends `${infer _character}${infer rest}`
+    ? StringLiteralContent<rest, quote>
+  : false;
+
+type StringLiteral<text extends string> = text extends `"${infer content}"`
+  ? StringLiteralContent<content, '"'>
+  : text extends `'${infer content}'` ? StringLiteralContent<content, "'">
+  : false;
+
 type OperatorToken<operators extends OperatorRegistry> =
   & keyof operators
   & string;
@@ -123,17 +142,17 @@ type ParenthesizedOperatorToken<
 > = operator extends string ? `(${operator})`
   : never;
 
-type StringHasReference<expression extends string> = Trim<expression> extends
-  `${string}?${string}` ? true
-  : false;
-
 type StringOperandSyntax<operators extends OperatorRegistry, operand> =
   operand extends string ? Trim<operand> extends "" ? false
     : Trim<operand> extends "?" ? true
     : Trim<operand> extends `?${infer name}` ? Identifier<Trim<name>>
     : Trim<operand> extends `${number}` ? true
     : Trim<operand> extends "true" | "false" ? true
+    : StringLiteral<Trim<operand>> extends true ? true
     : Trim<operand> extends ParenthesizedOperatorToken<operators> ? true
+    : Trim<operand> extends `(${infer expression})`
+      ? [StringSyntax<operators, expression>] extends [never] ? false
+      : true
     : false
     : false;
 
@@ -178,6 +197,54 @@ type StringSyntaxMessageFor<expression extends string> = StringSyntaxMessage<
   `\`${expression}\` expected operands separated by registered operators`
 >;
 
+type Or<left, right> = left extends true ? true
+  : right extends true ? true
+  : false;
+
+type StringOperandHasReference<
+  operators extends OperatorRegistry,
+  operand,
+> = operand extends string ? Trim<operand> extends "?" ? true
+  : Trim<operand> extends `?${infer name}` ? Identifier<Trim<name>>
+  : Trim<operand> extends `${number}` ? false
+  : Trim<operand> extends "true" | "false" ? false
+  : StringLiteral<Trim<operand>> extends true ? false
+  : Trim<operand> extends ParenthesizedOperatorToken<operators> ? false
+  : Trim<operand> extends `(${infer expression})`
+    ? StringExpressionHasReference<operators, expression>
+  : false
+  : false;
+
+type BinaryStringHasReference<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator = OperatorToken<operators>,
+> = operator extends string
+  ? Trim<expression> extends `${infer left}${operator}${infer right}`
+    ? OperatorBoundary<operator, left, right> extends true ? Or<
+        StringOperandHasReference<operators, left>,
+        ValueExpressionHasReference<operators, right>
+      >
+    : never
+  : never
+  : never;
+
+type ValueExpressionHasReference<
+  operators extends OperatorRegistry,
+  expression extends string,
+> = StringOperandSyntax<operators, expression> extends true
+  ? StringOperandHasReference<operators, expression>
+  : BinaryStringHasReference<operators, expression> extends infer has_reference
+    ? [has_reference] extends [never] ? false
+    : has_reference extends true ? true
+    : false
+  : false;
+
+type StringExpressionHasReference<
+  operators extends OperatorRegistry,
+  expression extends string,
+> = ValueExpressionHasReference<operators, expression>;
+
 /** @internal */
 type StringCallResult<
   operators extends OperatorRegistry,
@@ -187,7 +254,7 @@ type StringCallResult<
   : StringSyntax<operators, expression> extends never
     ? StringSyntaxMessageFor<expression>
   : rest extends readonly []
-    ? StringHasReference<expression> extends true
+    ? StringExpressionHasReference<operators, expression> extends true
       ? StringRunner<operators, expression>
     : unknown
   : unknown;
@@ -221,28 +288,31 @@ export interface InterpreterOptions {
 }
 
 /** Callable interpreter with its operator registry attached. */
-export type Interpreter<operators extends OperatorRegistry> =
-  & {
-    readonly operators: operators;
-    get(token: string): OperatorDefinition | undefined;
-    <
-      const expression extends string,
-      const rest extends readonly unknown[],
-    >(
-      expression: CheckedArgument<
-        expression,
-        StringCallResult<operators, expression, rest>
-      >,
-      ...rest: rest
-    ): CheckedResult<StringCallResult<operators, expression, rest>>;
-  }
-  & operators;
+export type Interpreter<operators extends OperatorRegistry> = {
+  readonly operators: operators;
+  get<const token extends keyof operators & string>(
+    token: token,
+  ): operators[token];
+  get(token: string): OperatorDefinition | undefined;
+  <
+    const expression extends string,
+    const rest extends readonly unknown[],
+  >(
+    expression: CheckedArgument<
+      expression,
+      StringCallResult<operators, expression, rest>
+    >,
+    ...rest: rest
+  ): CheckedResult<StringCallResult<operators, expression, rest>>;
+};
 
 /** Create a callable interpreter from an operator registry. */
 export function interpreter<const operators extends OperatorRegistry>(
   operators: operators,
   options: InterpreterOptions = {},
 ): Interpreter<operators> {
+  operator_registry(operators);
+
   const interpreter = ((expression: string, ...substitutions: unknown[]) => {
     return interpret_string_expression(
       operators,
@@ -252,7 +322,6 @@ export function interpreter<const operators extends OperatorRegistry>(
     );
   }) as unknown as Interpreter<operators>;
 
-  Object.assign(interpreter, operators);
   Object.defineProperty(interpreter, "operators", {
     value: operators,
     enumerable: false,
@@ -299,7 +368,7 @@ function interpret_string_expression(
   substitutions: readonly unknown[],
   options: InterpreterOptions,
 ): unknown {
-  if (substitutions.length === 0 && has_reference(expression)) {
+  if (substitutions.length === 0 && has_reference(operators, expression)) {
     return (...values: readonly unknown[]) => {
       return evaluate_string_expression(operators, expression, values, options);
     };
@@ -327,11 +396,23 @@ function evaluate_string_expression(
     values,
     value_index: 0,
   };
-  const tokens = tokenize_text(operators, expression, context, true);
 
-  if (context.value_index !== values.length) {
+  const result = evaluate_text(operators, expression, context, options);
+
+  if (context.value_index < values.length) {
     throw new TypeError("interpreter expression received too many values");
   }
+
+  return result;
+}
+
+function evaluate_text(
+  operators: OperatorRegistry,
+  text: string,
+  context: TokenizeContext,
+  options: InterpreterOptions,
+): unknown {
+  const tokens = tokenize_text(operators, text, context, options, true);
 
   return evaluate_tokens(tokens.tokens, options);
 }
@@ -340,6 +421,7 @@ function tokenize_text(
   operators: OperatorRegistry,
   text: string,
   context: TokenizeContext,
+  options: InterpreterOptions,
   expecting_value: boolean,
   tokens: RuntimeToken[] = [],
 ): { readonly tokens: RuntimeToken[]; readonly expecting_value: boolean } {
@@ -354,7 +436,7 @@ function tokenize_text(
     }
 
     if (expecting_value) {
-      const value = read_value(operators, text, index, context);
+      const value = read_value(operators, text, index, context, options);
 
       if (value === undefined) {
         throw new TypeError(
@@ -394,6 +476,7 @@ function read_value(
   text: string,
   index: number,
   context: TokenizeContext,
+  options: InterpreterOptions,
 ): { readonly value: unknown; readonly next: number } | undefined {
   if (text[index] === "?") {
     return read_reference(text, index, context);
@@ -405,7 +488,8 @@ function read_value(
     return literal;
   }
 
-  return read_parenthesized_operator_value(operators, text, index);
+  return read_parenthesized_operator_value(operators, text, index) ??
+    read_parenthesized_expression(operators, text, index, context, options);
 }
 
 function read_parenthesized_operator_value(
@@ -426,6 +510,37 @@ function read_parenthesized_operator_value(
   return { value: operator.definition, next: operator.next + 1 };
 }
 
+function read_parenthesized_expression(
+  operators: OperatorRegistry,
+  text: string,
+  index: number,
+  context: TokenizeContext,
+  options: InterpreterOptions,
+): { readonly value: unknown; readonly next: number } | undefined {
+  if (text[index] !== "(") {
+    return undefined;
+  }
+
+  const close = find_closing_parenthesis(text, index);
+
+  if (close === undefined) {
+    throw new TypeError("interpreter expression is missing `)`");
+  }
+
+  const expression = text.slice(index + 1, close);
+
+  if (expression.trim() === "") {
+    throw new TypeError(
+      "interpreter expected an expression inside parentheses",
+    );
+  }
+
+  return {
+    value: evaluate_text(operators, expression, context, options),
+    next: close + 1,
+  };
+}
+
 function read_reference(
   text: string,
   index: number,
@@ -434,6 +549,13 @@ function read_reference(
   const name = read_identifier(text, index + 1);
 
   if (name === undefined) {
+    if (context.value_index >= context.values.length) {
+      throw new TypeError(
+        "interpreter expression is missing a value for placeholder `" +
+          (context.value_index + 1) + "`",
+      );
+    }
+
     const value = context.values[context.value_index];
     context.value_index += 1;
 
@@ -450,7 +572,17 @@ function read_literal(
   text: string,
   index: number,
 ): { readonly value: unknown; readonly next: number } | undefined {
-  const number = /^[+-]?\d+(?:\.\d+)?/.exec(text.slice(index));
+  const string = read_string_literal(text, index);
+
+  if (string !== undefined) {
+    return string;
+  }
+
+  const number =
+    /^(?:0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[+-]?(?:(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?))/
+      .exec(
+        text.slice(index),
+      );
 
   if (number !== null) {
     return { value: Number(number[0]), next: index + number[0].length };
@@ -465,6 +597,66 @@ function read_literal(
   }
 
   return undefined;
+}
+
+function read_string_literal(
+  text: string,
+  index: number,
+): { readonly value: string; readonly next: number } | undefined {
+  const quote = text[index];
+
+  if (quote !== '"' && quote !== "'") {
+    return undefined;
+  }
+
+  let next = index + 1;
+  let value = "";
+
+  while (next < text.length) {
+    const character = text[next];
+
+    if (character === quote) {
+      return { value, next: next + 1 };
+    }
+
+    if (character !== "\\") {
+      value += character;
+      next += 1;
+      continue;
+    }
+
+    const escape = text[next + 1];
+
+    if (escape === undefined) {
+      throw new TypeError(
+        "interpreter string literal has an incomplete escape",
+      );
+    }
+
+    value += escaped_character(escape);
+    next += 2;
+  }
+
+  throw new TypeError("interpreter string literal is missing closing quote");
+}
+
+function escaped_character(escape: string): string {
+  switch (escape) {
+    case "\\":
+    case '"':
+    case "'":
+      return escape;
+    case "n":
+      return "\n";
+    case "r":
+      return "\r";
+    case "t":
+      return "\t";
+    default:
+      throw new TypeError(
+        "interpreter string literal has unsupported escape `" + escape + "`",
+      );
+  }
 }
 
 function read_identifier(
@@ -562,7 +754,6 @@ function is_operator_symbol(character: string): boolean {
     case "<":
     case "=":
     case ">":
-    case "?":
     case "@":
     case "\\":
     case "^":
@@ -654,12 +845,12 @@ function apply_operator_token(
     throw new TypeError("interpreter expression is missing an operator");
   }
 
-  const right = values.pop();
-  const left = values.pop();
-
-  if (left === undefined || right === undefined) {
+  if (values.length < 2) {
     throw new TypeError("interpreter expression is missing a value");
   }
+
+  const right = values.pop();
+  const left = values.pop();
 
   values.push(apply_operator_value(operator, left, right, options));
 }
@@ -697,12 +888,104 @@ function skip_whitespace(text: string, index: number): number {
   return next;
 }
 
-function has_reference(expression: string): boolean {
-  return expression.includes("?");
+function has_reference(
+  operators: OperatorRegistry,
+  expression: string,
+): boolean {
+  let index = 0;
+  let expecting_value = true;
+
+  while (index < expression.length) {
+    index = skip_whitespace(expression, index);
+
+    if (index >= expression.length) {
+      return false;
+    }
+
+    if (expecting_value) {
+      if (expression[index] === "?") {
+        return true;
+      }
+
+      const literal = read_literal(expression, index);
+
+      if (literal !== undefined) {
+        index = literal.next;
+        expecting_value = false;
+        continue;
+      }
+
+      const operator_value = read_parenthesized_operator_value(
+        operators,
+        expression,
+        index,
+      );
+
+      if (operator_value !== undefined) {
+        index = operator_value.next;
+        expecting_value = false;
+        continue;
+      }
+
+      if (expression[index] === "(") {
+        const close = find_closing_parenthesis(expression, index);
+
+        if (close === undefined) {
+          return false;
+        }
+
+        if (has_reference(operators, expression.slice(index + 1, close))) {
+          return true;
+        }
+
+        index = close + 1;
+        expecting_value = false;
+        continue;
+      }
+
+      return false;
+    }
+
+    const operator = read_operator(operators, expression, index);
+
+    if (operator === undefined) {
+      return false;
+    }
+
+    index = operator.next;
+    expecting_value = true;
+  }
+
+  return false;
 }
 
 function has_named_reference(expression: string): boolean {
   return /\?[A-Za-z_$]/.test(expression);
+}
+
+function find_closing_parenthesis(
+  text: string,
+  open: number,
+): number | undefined {
+  let depth = 0;
+
+  for (let index = open; index < text.length; index += 1) {
+    switch (text[index]) {
+      case "(":
+        depth += 1;
+        break;
+      case ")":
+        depth -= 1;
+
+        if (depth === 0) {
+          return index;
+        }
+
+        break;
+    }
+  }
+
+  return undefined;
 }
 
 function named_scope_value(scope: unknown, name: string): unknown {

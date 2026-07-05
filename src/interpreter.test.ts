@@ -5,6 +5,8 @@ import {
   number_operator,
   operators,
   standard_operators,
+  type StandardOperators,
+  type StringRunner,
 } from "../mod.ts";
 
 Deno.test("interpreter evaluates registered infix operators with precedence", () => {
@@ -40,6 +42,54 @@ Deno.test("interpreter uses only the operators registered on the instance", () =
   assert_equals(inverted_itp("2 add 3 mul 4"), 20);
 });
 
+Deno.test("interpreter keeps operators in the registry instead of callable properties", () => {
+  const odd_itp = interpreter(operators({
+    custom: number_operator(6, "left", (left, right) => left + right),
+    get: number_operator(6, "left", (left, right) => left + right),
+    length: number_operator(6, "left", (left, right) => left + right),
+    name: number_operator(6, "left", (left, right) => left + right),
+  }));
+
+  assert_equals(Object.hasOwn(odd_itp, "custom"), false);
+  assert_equals(Object.hasOwn(odd_itp, "get"), true);
+  assert_equals(Object.hasOwn(odd_itp, "length"), true);
+  assert_equals(Object.hasOwn(odd_itp, "name"), true);
+  assert_equals(typeof odd_itp.get, "function");
+  assert_equals(odd_itp.get("get"), odd_itp.operators.get);
+  assert_equals(odd_itp("1 custom 2 get 3 length 4 name 5"), 15);
+});
+
+Deno.test("operator registries reject tokens that conflict with parser syntax", () => {
+  assert_true(
+    catch_type_error(() => operators({ "": number_operator(1, "left", add) }))
+      .message.includes("must not be empty"),
+    "empty operators should be rejected",
+  );
+  assert_true(
+    catch_type_error(() =>
+      operators({ "bad token": number_operator(1, "left", add) })
+    ).message.includes("must not contain whitespace"),
+    "whitespace operators should be rejected",
+  );
+  assert_true(
+    catch_type_error(() => operators({ "?": number_operator(1, "left", add) }))
+      .message.includes("reserved syntax"),
+    "? operators should be rejected",
+  );
+  assert_true(
+    catch_type_error(() =>
+      operators({ "(+)": number_operator(1, "left", add) })
+    )
+      .message.includes("reserved syntax"),
+    "parenthesized operator tokens should be rejected",
+  );
+  assert_true(
+    catch_type_error(() => operators({ '"': number_operator(1, "left", add) }))
+      .message.includes("reserved syntax"),
+    "quote operator tokens should be rejected",
+  );
+});
+
 Deno.test("interpreter supports custom symbolic operators", () => {
   const math_itp = interpreter(operators({
     ...standard_operators,
@@ -61,6 +111,61 @@ Deno.test("interpreter treats parenthesized operator values as syntax", () => {
   assert_equals(itp("(!=)"), itp.get("!="));
   assert_equals(word_itp.get("(add)"), undefined);
   assert_equals(word_itp("(add)"), word_itp.get("add"));
+});
+
+Deno.test("interpreter supports grouped expressions", () => {
+  assert_equals(itp("(1 + 2) * 3"), 9);
+  assert_equals(itp("1 * (2 + 3)"), 5);
+  assert_equals(itp("((1 + 2) * (3 + 4))"), 21);
+  assert_equals(itp("(? + ?) * ?", 1, 2, 3), 9);
+  assert_equals(itp("((+))"), itp.get("+"));
+});
+
+Deno.test("interpreter number syntax matches TypeScript number strings", () => {
+  assert_equals(itp("1e3 + 2"), 1002);
+  assert_equals(itp("1. + 2"), 3);
+  assert_equals(itp(".5 + 1"), 1.5);
+  assert_equals(itp("0x10 + 1"), 17);
+  assert_equals(itp("0b10 + 1"), 3);
+  assert_equals(itp("0o10 + 1"), 9);
+});
+
+Deno.test("interpreter supports quoted strings and string concatenation", () => {
+  assert_equals(itp('"hello"'), "hello");
+  assert_equals(itp("'hello'"), "hello");
+  assert_equals(itp('"hello" ++ "world"'), "helloworld");
+  assert_equals(itp("'hello' ++ ' ' ++ \"world\""), "hello world");
+  assert_equals(itp('"line\\n" ++ "tab\\t"'), "line\ntab\t");
+  assert_equals(itp("'it\\'s'"), "it's");
+  assert_equals(itp('"say \\"hi\\""'), 'say "hi"');
+  assert_equals(itp("'?'"), "?");
+  assert_true(
+    catch_type_error(() => itp('"hello" + "world"')).message.includes(
+      "expected a number",
+    ),
+    "+ should remain numeric-only",
+  );
+});
+
+Deno.test("interpreter reports placeholder arity and preserves undefined values", () => {
+  assert_equals(itp("?", undefined), undefined);
+  assert_equals(itp("? == ?", undefined, undefined), true);
+  assert_true(
+    catch_type_error(() => itp("?")()).message.includes(
+      "missing a value for placeholder `1`",
+    ),
+    "missing placeholder values should be reported precisely",
+  );
+  assert_true(
+    catch_type_error(() => itp("? + ?", 1)).message.includes(
+      "missing a value for placeholder `2`",
+    ),
+    "missing later placeholder values should include the placeholder index",
+  );
+  assert_true(
+    catch_type_error(() => itp("?", 1, 2)).message.includes("too many values"),
+    "extra placeholder values should still be rejected",
+  );
 });
 
 Deno.test("interpreter rejects non-associative and mixed-associativity chains", () => {
@@ -99,9 +204,18 @@ const expect_interpreter_type_errors = () => {
   itp("? ** ?", 1, 2);
   // @ts-expect-error Parenthesized values still need registered operators.
   itp("(**)");
+  // @ts-expect-error String literals must close with the same quote.
+  itp('"unterminated');
+  // @ts-expect-error Question marks inside strings must not create runners.
+  const question_runner: StringRunner<StandardOperators, "'?'"> = itp("'?'");
+  void question_runner;
 };
 
 void expect_interpreter_type_errors;
+
+function add(left: number, right: number): number {
+  return left + right;
+}
 
 function catch_type_error(fn: () => unknown): TypeError {
   let caught: unknown;
