@@ -1,6 +1,9 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import {
   boolean_unary_operator,
+  first_operator_token,
+  get_operator_from,
+  has_operator_kind,
   interpreter,
   itp,
   number_operator,
@@ -9,7 +12,9 @@ import {
   operators,
   standard_operators,
   type StandardOperators,
+  string_operator,
   type StringRunner,
+  unary_operator,
 } from "../mod.ts";
 
 Deno.test("interpreter evaluates registered infix operators with precedence", () => {
@@ -18,9 +23,45 @@ Deno.test("interpreter evaluates registered infix operators with precedence", ()
   assert_equals(itp("true || false && false"), true);
 });
 
+Deno.test("interpreter accepts whitespace wherever token boundaries allow it", () => {
+  assert_equals(itp(" \t\n 2 \n + \t 3 \r\n * 4 \t "), 14);
+  assert_equals(itp("(\n1 + 2\n) *\t3"), 9);
+  assert_equals(itp("!\nfalse"), true);
+
+  const word_itp = interpreter(operators({
+    add: number_operator(6, "left", add),
+    neg: number_unary_operator(8, (value) => -value),
+  }));
+
+  assert_equals(word_itp("neg\n20 add\t62"), 42);
+});
+
+Deno.test("interpreter parses standalone literals without coercion", () => {
+  assert_equals(itp("0"), 0);
+  assert_equals(itp("-0"), -0);
+  assert_equals(itp("+1.5"), 1.5);
+  assert_equals(itp("true"), true);
+  assert_equals(itp("false"), false);
+  assert_equals(itp('"hello"'), "hello");
+  assert_equals(itp("'hello'"), "hello");
+});
+
+Deno.test("interpreter preserves standard arithmetic and boolean expectations", () => {
+  assert_equals(itp("8 / 2 % 3"), 1);
+  assert_equals(itp("2 + 3 * -4"), -10);
+  assert_equals(itp("--2"), 2);
+  assert_equals(itp("2*-3"), -6);
+  assert_equals(itp("1--2"), 3);
+  assert_equals(itp("!(true || false)"), false);
+  assert_equals(itp("!true || true"), true);
+  assert_equals(itp("1 < 2 && 2 < 3"), true);
+  assert_equals(itp("(1 < 2) == true"), true);
+});
+
 Deno.test("interpreter supports placeholders named references and runners", () => {
   const add = itp("? + ?");
   const double_first = itp("?0 + ?0");
+  const named_runner = itp("?left + ?");
   const named = itp("?left + ?right * ?", {
     left: 2,
     right: 3,
@@ -35,6 +76,10 @@ Deno.test("interpreter supports placeholders named references and runners", () =
   assert_equals(itp("?2", "first", "second", "third"), "third");
   assert_equals(itp("?0 + ?", 20, 22), 42);
   assert_equals(itp("(?1 - ?0) * ?0", 2, 23), 42);
+  assert_equals(itp("?left + ?0", { left: 20 }, 22), 42);
+  assert_equals(itp("?0 + ?left", { left: 22 }, 20), 42);
+  assert_equals(itp("?left + ?", { left: 20 }, 22), 42);
+  assert_equals(named_runner({ left: 20 }, 22), 42);
 });
 
 Deno.test("interpreter uses only the operators registered on the instance", () => {
@@ -69,6 +114,26 @@ Deno.test("interpreter keeps operators in the registry instead of callable prope
   assert_equals(odd_itp("1 custom 2 get 3 length 4 name 5"), 15);
 });
 
+Deno.test("operator registry helpers work with single definitions and overloads", () => {
+  assert_equals(get_operator_from(standard_operators, "+"), itp.get("+"));
+  assert_equals(has_operator_kind(standard_operators, "+", "number"), true);
+  assert_equals(has_operator_kind(standard_operators, "++", "string"), true);
+  assert_equals(has_operator_kind(standard_operators, "!", "boolean"), true);
+  assert_equals(
+    has_operator_kind(standard_operators, "missing", "number"),
+    false,
+  );
+  assert_equals(first_operator_token(standard_operators, "string"), "++");
+
+  const overloaded = itp.get("-");
+
+  assert_true(
+    Array.isArray(overloaded),
+    "overloaded standard '-' should expose unary and binary definitions",
+  );
+  assert_equals(has_operator_kind(standard_operators, "-", "number"), true);
+});
+
 Deno.test("operator registries reject tokens that conflict with parser syntax", () => {
   assert_true(
     catch_type_error(() => operators({ "": number_operator(1, "left", add) }))
@@ -100,6 +165,36 @@ Deno.test("operator registries reject tokens that conflict with parser syntax", 
   );
 });
 
+Deno.test("operator constructors enforce operand types at application time", () => {
+  const custom_itp = interpreter(operators({
+    bool: boolean_unary_operator(8, (value) => value),
+    join: string_operator(6, "left", (left, right) => left + right),
+    neg: number_unary_operator(8, (value) => -value),
+    raw: unary_operator("raw", 8, (value) => ({ value })),
+  }));
+
+  assert_equals(custom_itp("bool true"), true);
+  assert_equals(custom_itp("'a' join 'b'"), "ab");
+  assert_equals(custom_itp("neg 42"), -42);
+  assert_equals(custom_itp("raw 42"), { value: 42 });
+
+  assert_type_error_message(
+    () => custom_itp("bool 1"),
+    "expected a boolean",
+    "boolean unary operators should reject non-boolean operands",
+  );
+  assert_type_error_message(
+    () => custom_itp("'a' join 1"),
+    "expected a string",
+    "string binary operators should reject non-string operands",
+  );
+  assert_type_error_message(
+    () => custom_itp("neg true"),
+    "expected a number",
+    "number unary operators should reject non-number operands",
+  );
+});
+
 Deno.test("interpreter supports custom symbolic operators", () => {
   const math_itp = interpreter(operators({
     ...standard_operators,
@@ -119,6 +214,15 @@ Deno.test("interpreter supports unary operators", () => {
   assert_equals(itp("!!true"), true);
   assert_equals(itp("!true == false"), true);
   assert_equals(itp("(-)"), itp.get("-"));
+});
+
+Deno.test("interpreter respects unary and binary precedence combinations", () => {
+  assert_equals(itp("-2 * 3"), -6);
+  assert_equals(itp("-(2 * 3)"), -6);
+  assert_equals(itp("-2 * -3"), 6);
+  assert_equals(itp("!(1 < 2) == false"), true);
+  assert_equals(itp("!(-1 == -1)"), false);
+  assert_equals(itp("!!(1 < 2)"), true);
 });
 
 Deno.test("interpreter supports custom unary operators and overloads", () => {
@@ -184,6 +288,8 @@ Deno.test("interpreter treats parenthesized operator values as syntax", () => {
   assert_equals(itp("(!=)"), itp.get("!="));
   assert_equals(word_itp.get("(add)"), undefined);
   assert_equals(word_itp("(add)"), word_itp.get("add"));
+  assert_equals(itp("((!))"), itp.get("!"));
+  assert_equals(itp("((-))"), itp.get("-"));
 });
 
 Deno.test("interpreter supports grouped expressions", () => {
@@ -192,10 +298,15 @@ Deno.test("interpreter supports grouped expressions", () => {
   assert_equals(itp("((1 + 2) * (3 + 4))"), 21);
   assert_equals(itp("(? + ?) * ?", 1, 2, 3), 9);
   assert_equals(itp("((+))"), itp.get("+"));
+  assert_equals(itp("('a' ++ ('b' ++ 'c'))"), "abc");
+  assert_equals(itp("!(false || (true && false))"), true);
 });
 
 Deno.test("interpreter number syntax matches TypeScript number strings", () => {
   assert_equals(itp("1e3 + 2"), 1002);
+  assert_equals(itp("1E3 + 2"), 1002);
+  assert_equals(itp("1e-3 + 1"), 1.001);
+  assert_equals(itp("+.5 + .25"), 0.75);
   assert_equals(itp("1. + 2"), 3);
   assert_equals(itp(".5 + 1"), 1.5);
   assert_equals(itp("0x10 + 1"), 17);
@@ -211,13 +322,30 @@ Deno.test("interpreter supports quoted strings and string concatenation", () => 
   assert_equals(itp('"line\\n" ++ "tab\\t"'), "line\ntab\t");
   assert_equals(itp("'it\\'s'"), "it's");
   assert_equals(itp('"say \\"hi\\""'), 'say "hi"');
+  assert_equals(itp("'slash\\\\'"), "slash\\");
+  assert_equals(itp('"carriage\\rreturn"'), "carriage\rreturn");
   assert_equals(itp("'?'"), "?");
   assert_equals(itp("'?name' ++ ?", "value"), "?namevalue");
+  assert_equals(itp("'1 + 2' ++ ' = text'"), "1 + 2 = text");
   assert_true(
     catch_type_error(() => itp('"hello" + "world"')).message.includes(
       "expected a number",
     ),
     "+ should remain numeric-only",
+  );
+});
+
+Deno.test("interpreter accepts JavaScript-interpolated expression strings", () => {
+  const n = 20;
+  const m = 22;
+  const s = "hello";
+
+  assert_equals(itp(`${n} + ${m}`), 42);
+  assert_equals(itp(`"${s}" ++ " world"`), "hello world");
+  assert_type_error_message(
+    () => itp(`"${s}" + "world"`),
+    "expected a number",
+    "interpolated quoted strings should still use string operators",
   );
 });
 
@@ -253,6 +381,21 @@ Deno.test("interpreter reports placeholder arity and preserves undefined values"
     ),
     "extra values after the highest indexed placeholder should be rejected",
   );
+  assert_type_error_message(
+    () => itp("?missing", {}),
+    "scope is missing `missing`",
+    "missing named scope properties should identify the name",
+  );
+  assert_type_error_message(
+    () => itp("?missing", undefined),
+    "expected a scope object",
+    "named placeholders should require an object scope",
+  );
+  assert_type_error_message(
+    () => itp("?999999999999999999999", 1),
+    "too large",
+    "unsafe indexed placeholders should be rejected",
+  );
 });
 
 Deno.test("interpreter rejects non-associative and mixed-associativity chains", () => {
@@ -284,11 +427,84 @@ Deno.test("interpreter rejects non-associative and mixed-associativity chains", 
   );
 });
 
+Deno.test("interpreter reports useful syntax and literal errors", () => {
+  assert_type_error_message(
+    () => evaluate_dynamic(""),
+    "did not reduce to one value",
+    "empty expressions should be rejected",
+  );
+  assert_type_error_message(
+    () => itp("1 +"),
+    "missing a value",
+    "trailing binary operators should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic("1 2"),
+    "expected a registered operator",
+    "adjacent values should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic("(1 + 2"),
+    "missing `)`",
+    "unclosed groups should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic("()"),
+    "expected an expression inside parentheses",
+    "empty groups should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic('"unterminated'),
+    "missing closing quote",
+    "unterminated strings should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic('"bad\\x"'),
+    "unsupported escape `x`",
+    "unsupported string escapes should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic('"bad\\'),
+    "incomplete escape",
+    "incomplete string escapes should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic("1_000 + 1"),
+    "expected a registered operator",
+    "numeric separators are not part of the supported number syntax",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic("? <%> ?", 1, 2),
+    "expected a registered operator",
+    "unregistered symbolic operators should be rejected",
+  );
+  assert_type_error_message(
+    () => evaluate_dynamic("? ** ?", 1, 2),
+    "expected a registered operator",
+    "unknown multi-character symbolic operators should not be split",
+  );
+});
+
+Deno.test("interpreter apply hooks can replace standard operator semantics", () => {
+  const traced = interpreter(standard_operators, {
+    apply_operator(operator, ...operands) {
+      if (operator.token === "+") {
+        return String(operands[0]) + ":" + String(operands[1]);
+      }
+
+      if (operator.definition.arity === 1) {
+        return operator.definition.apply(operands[0]);
+      }
+
+      return operator.definition.apply(operands[0], operands[1]);
+    },
+  });
+
+  assert_equals(traced("1 + 2"), "1:2");
+  assert_equals(traced("-?0", 42), -42);
+});
+
 const expect_interpreter_type_errors = () => {
-  // @ts-expect-error Strings must use registered operators.
-  itp("? <%> ?", 1, 2);
-  // @ts-expect-error Strings must not split unknown symbolic operators.
-  itp("? ** ?", 1, 2);
   // @ts-expect-error Parenthesized values still need registered operators.
   itp("(**)");
   // @ts-expect-error String literals must close with the same quote.
@@ -302,6 +518,13 @@ void expect_interpreter_type_errors;
 
 function add(left: number, right: number): number {
   return left + right;
+}
+
+function evaluate_dynamic(
+  expression: string,
+  ...values: readonly unknown[]
+): unknown {
+  return itp(expression, ...values);
 }
 
 function catch_type_error(fn: () => unknown): TypeError {
@@ -318,4 +541,12 @@ function catch_type_error(fn: () => unknown): TypeError {
   }
 
   throw new Error("Expected TypeError");
+}
+
+function assert_type_error_message(
+  fn: () => unknown,
+  expected: string,
+  message: string,
+): void {
+  assert_true(catch_type_error(fn).message.includes(expected), message);
 }

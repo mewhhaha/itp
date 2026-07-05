@@ -110,14 +110,26 @@ type EndsWithOperatorSymbol<text extends string> = text extends
   : false;
 
 type OperatorBoundary<
+  operators extends OperatorRegistry,
   operator extends string,
   left extends string,
   right extends string,
 > = ContainsOperatorSymbol<operator> extends true
   ? EndsWithOperatorSymbol<left> extends true ? false
-  : StartsWithOperatorSymbol<right> extends true ? false
+  : StartsWithOperatorSymbol<right> extends true
+    ? StartsWithUnaryOperator<operators, right> extends true ? true
+    : false
   : true
   : true;
+
+type StartsWithUnaryOperator<
+  operators extends OperatorRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 1>,
+> = operator extends string
+  ? Trim<expression> extends `${operator}${string}` ? true
+  : never
+  : never;
 
 type StringSyntaxMessage<message extends string> =
   `interpreter string error: ${message}`;
@@ -219,7 +231,12 @@ type BinaryStringSyntaxForOperator<
   operator extends string,
   prefix extends string = "",
 > = expression extends `${infer left}${operator}${infer right}`
-  ? OperatorBoundary<operator, `${prefix}${left}`, right> extends true
+  ? OperatorBoundary<
+    operators,
+    operator,
+    `${prefix}${left}`,
+    right
+  > extends true
     ? BinaryStringTailSyntax<operators, `${prefix}${left}`, right> extends
       infer syntax ? [syntax] extends [never] ? BinaryStringSyntaxForOperator<
           operators,
@@ -251,7 +268,12 @@ type BinaryStringHasReferenceForOperator<
   operator extends string,
   prefix extends string = "",
 > = expression extends `${infer left}${operator}${infer right}`
-  ? OperatorBoundary<operator, `${prefix}${left}`, right> extends true
+  ? OperatorBoundary<
+    operators,
+    operator,
+    `${prefix}${left}`,
+    right
+  > extends true
     ? BinaryStringTailSyntax<operators, `${prefix}${left}`, right> extends
       infer syntax
       ? [syntax] extends [never] ? BinaryStringHasReferenceForOperator<
@@ -851,7 +873,10 @@ function read_operator(
   for (const token of operator_tokens(operators)) {
     if (
       text.startsWith(token, index) &&
-      (!check_boundary || has_operator_boundary(text, index, token))
+      (
+        !check_boundary ||
+        has_operator_boundary(operators, text, index, token, arity)
+      )
     ) {
       const definition = operator_definition_for_arity(operators[token], arity);
 
@@ -884,7 +909,7 @@ function read_operator_entry(
   for (const token of operator_tokens(operators)) {
     if (
       text.startsWith(token, index) &&
-      has_operator_boundary(text, index, token)
+      has_operator_entry_boundary(text, index, token)
     ) {
       return {
         token,
@@ -922,6 +947,35 @@ function operator_tokens(operators: OperatorRegistry): readonly string[] {
 }
 
 function has_operator_boundary(
+  operators: OperatorRegistry,
+  text: string,
+  index: number,
+  operator: string,
+  arity: 1 | 2,
+): boolean {
+  if (!has_operator_symbol(operator)) {
+    return true;
+  }
+
+  const before = text[index - 1];
+  const after = text[index + operator.length];
+
+  if (before !== undefined && is_operator_symbol(before)) {
+    return false;
+  }
+
+  if (
+    after !== undefined &&
+    is_operator_symbol(after) &&
+    !has_unary_operator_at(operators, text, index + operator.length, arity)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function has_operator_entry_boundary(
   text: string,
   index: number,
   operator: string,
@@ -942,6 +996,19 @@ function has_operator_boundary(
   }
 
   return true;
+}
+
+function has_unary_operator_at(
+  operators: OperatorRegistry,
+  text: string,
+  index: number,
+  arity: 1 | 2,
+): boolean {
+  if (arity !== 2) {
+    return false;
+  }
+
+  return read_operator(operators, text, index, 1, false) !== undefined;
 }
 
 function has_operator_symbol(text: string): boolean {
