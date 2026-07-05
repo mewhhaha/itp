@@ -1,0 +1,31 @@
+{
+  "accounts": [
+    {
+      "name": "Atlas",
+      "new_revenue": 120000,
+      "expansion_revenue": 36000,
+      "payroll": 72000,
+      "cloud": 11000,
+      "support": 7000,
+      "risk_score": 0.18
+    },
+    {
+      "name": "Beacon",
+      "new_revenue": 84000,
+      "expansion_revenue": 9000,
+      "payroll": 56000,
+      "cloud": 18000,
+      "support": 13000,
+      "risk_score": 0.46
+    }
+  ],
+  "rollups": {
+    "gross_revenue": ["new_revenue", "expansion_revenue"],
+    "operating_cost": ["payroll", "cloud", "support"]
+  },
+  "derived": {
+    "net": "?gross_revenue - ?operating_cost",
+    "margin": "?net / ?gross_revenue",
+    "healthy": "?margin >= 0.25 && ?risk_score < 0.4"
+  }
+}

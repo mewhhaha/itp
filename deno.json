@@ -13,6 +13,9 @@
       "deno.json",
       "mod.ts",
       "docs/**/*.md",
+      "examples/**/*.json",
+      "examples/**/*.md",
+      "examples/**/*.ts",
       "src/**/*.ts"
     ],
     "exclude": [
@@ -21,9 +24,10 @@
     ]
   },
   "tasks": {
-    "ci": "deno task fmt:check && deno task lint && deno task doc:lint && deno task check && deno task test && deno task publish:dry-run",
-    "check": "deno check mod.ts src/*.test.ts",
+    "ci": "deno task fmt:check && deno task lint && deno task doc:lint && deno task check && deno task test && deno task examples && deno task publish:dry-run",
+    "check": "deno check mod.ts src/*.test.ts examples/*.ts",
     "doc:lint": "deno doc --lint mod.ts",
+    "examples": "deno run examples/pricing_dsl.ts && deno run examples/functions_dsl.ts && deno run examples/rules_engine.ts && deno run examples/json_key_metrics.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",

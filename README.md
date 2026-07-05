@@ -88,6 +88,126 @@ words("neg ?", 42); // -42
 words("~?0 ~ ?1", 20, 62); // 42
 ```
 
+Operators can run arbitrary JavaScript or TypeScript functions. The parser only
+decides where the operands are; the operator body is normal code:
+
+```ts
+import {
+  type BinaryOperatorDefinition,
+  type InfixDirection,
+  interpreter,
+  operators,
+  type UnaryOperatorDefinition,
+} from "jsr:@mewhhaha/itp";
+
+type Guard<value> = (value: unknown) => value is value;
+type UnaryFunction = (value: unknown) => unknown;
+
+function checked_binary<const kind extends string, left, right, result>(
+  kind: kind,
+  precedence: number,
+  direction: InfixDirection,
+  left_guard: Guard<left>,
+  right_guard: Guard<right>,
+  fn: (left: left, right: right) => result,
+): BinaryOperatorDefinition<kind> {
+  return {
+    kind,
+    precedence,
+    direction,
+    arity: 2,
+    apply(left, right) {
+      if (!left_guard(left) || !right_guard(right)) {
+        throw new TypeError("operator `" + kind + "` rejected an operand");
+      }
+
+      return fn(left, right);
+    },
+  };
+}
+
+const anything: Guard<unknown> = (_value): _value is unknown => true;
+const unary_function: Guard<UnaryFunction> = (
+  value,
+): value is UnaryFunction => {
+  return typeof value === "function";
+};
+
+const functions = interpreter(operators({
+  then: checked_binary(
+    "pipe",
+    1,
+    "left",
+    anything,
+    unary_function,
+    (value, fn) => fn(value),
+  ),
+}));
+
+const trim = (value: unknown) => String(value).trim();
+const shout = (value: unknown) => String(value).toUpperCase() + "!";
+
+functions("? then ? then ?", " hello ", trim, shout); // "HELLO!"
+```
+
+Continuing in the same file, another generic helper can keep custom DSL
+operators compact while preserving runtime checks for domain values:
+
+```ts
+type Point = { x: number; y: number };
+
+function checked_unary<const kind extends string, value, result>(
+  kind: kind,
+  precedence: number,
+  guard: Guard<value>,
+  fn: (value: value) => result,
+): UnaryOperatorDefinition<kind> {
+  return {
+    kind,
+    precedence,
+    arity: 1,
+    apply(value) {
+      if (!guard(value)) {
+        throw new TypeError("operator `" + kind + "` rejected an operand");
+      }
+
+      return fn(value);
+    },
+  };
+}
+
+const point: Guard<Point> = (value): value is Point => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<Point>;
+
+  return typeof candidate.x === "number" && typeof candidate.y === "number";
+};
+
+const geometry = interpreter(operators({
+  near: checked_binary(
+    "geometry",
+    4,
+    "none",
+    point,
+    point,
+    (left, right) => Math.hypot(left.x - right.x, left.y - right.y) <= 10,
+  ),
+  quadrant: checked_unary("geometry", 8, point, (value) => {
+    return value.x >= 0 && value.y >= 0 ? "NE" : "other";
+  }),
+}));
+
+geometry("?from near ?to", {
+  from: { x: 0, y: 0 },
+  to: { x: 3, y: 4 },
+}); // true
+
+geometry("quadrant ?point", { point: { x: 3, y: 4 } }); // "NE"
+```
+
 Operator precedence follows the numeric `precedence` field: higher values bind
 more tightly. Binary operators also set `direction` for same-precedence
 associativity: `"left"`, `"right"`, or `"none"`. Unary operators are prefix
@@ -116,6 +236,15 @@ for placeholders, and quotes are reserved for string literals.
 - `standard_operators` exposes the default operator registry.
 
 See [docs/api.md](docs/api.md) for more detail.
+
+## Examples
+
+The [examples](examples) folder contains small DSLs for pricing, approval rules,
+and JSON-driven metric calculations. Run them all with:
+
+```sh
+deno task examples
+```
 
 ## Development
 

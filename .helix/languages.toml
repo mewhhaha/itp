@@ -1,0 +1,60 @@
+# Project-local Helix setup for this Deno package.
+
+[language-server.deno-lsp]
+command = "deno"
+args = ["lsp"]
+config.deno.enable = true
+config.deno.lint = true
+
+[[language]]
+name = "typescript"
+roots = ["deno.json", "deno.jsonc", ".git"]
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "ts", "-"] }
+language-servers = ["deno-lsp"]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "tsx"
+roots = ["deno.json", "deno.jsonc", ".git"]
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "tsx", "-"] }
+language-servers = ["deno-lsp"]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "javascript"
+roots = ["deno.json", "deno.jsonc", ".git"]
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "js", "-"] }
+language-servers = ["deno-lsp"]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "jsx"
+roots = ["deno.json", "deno.jsonc", ".git"]
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "jsx", "-"] }
+language-servers = ["deno-lsp"]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "json"
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "json", "-"] }
+language-servers = []
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "jsonc"
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "jsonc", "-"] }
+language-servers = []
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "markdown"
+auto-format = true
+formatter = { command = "deno", args = ["fmt", "--ext", "md", "-"] }
+language-servers = []
+indent = { tab-width = 2, unit = "  " }
