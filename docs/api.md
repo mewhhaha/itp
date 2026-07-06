@@ -11,6 +11,7 @@ The runtime parser supports:
 - positional placeholders: `?`
 - indexed placeholders: `?0`, `?1`, `?2`
 - named placeholders: `?name`
+- named values from the interpreter, such as `trim` or `HOME`
 - parenthesized operator values such as `(+)` and `(add)`
 - grouped expressions such as `(1 + 2) * 3`
 - prefix and infix operators from the interpreter registry
@@ -63,19 +64,48 @@ the first and second positional values.
 const calc = interpreter({
   add: number_operator(6, "left", (left, right) => left + right),
   neg: number_unary_operator(8, (value) => -value),
-}, options);
+}, {
+  values: {
+    answer: 42,
+  },
+});
 ```
 
 Creates a callable interpreter from the supplied operator registry. You can pass
 a plain object directly; `operators(...)` is only needed when you want to define
-and validate a reusable registry separately. The returned value also exposes:
+and validate a reusable registry separately. Use `options.values` to expose
+named constants or functions as bare identifiers in expressions. The returned
+value also exposes:
 
 - `calc.operators`
+- `calc.values`
 - `calc.get(token)`
+- `calc.get_value(name)`
 - `calc.raw(expression)`
 
 Operator tokens are not copied onto the callable interpreter as properties. This
 keeps tokens such as `get`, `name`, and `length` safe to use in a registry.
+Named values are also kept in `calc.values` rather than copied onto the callable
+interpreter.
+
+Bare named values are interpreter-level vocabulary. Named placeholders remain
+per-call data:
+
+```ts
+const calc = interpreter({
+  "+": number_operator(6, "left", (left, right) => left + right),
+}, {
+  values: {
+    one: 1,
+  },
+});
+
+calc("one + ?value", { value: 41 }); // 42
+calc.get_value("one"); // 1
+```
+
+Value names must be valid identifiers, cannot be `true` or `false`, and cannot
+conflict with an operator token.
 
 `raw` is for expressions that are only known at runtime, such as user-authored
 DSL strings. It returns either an `InterpreterError` or a function with

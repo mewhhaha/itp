@@ -36,6 +36,57 @@ Deno.test("interpreter accepts plain registry objects", () => {
   assert_equals(word_itp.get("add"), word_itp.operators.add);
 });
 
+Deno.test("interpreter supports named values and functions", () => {
+  const calc = interpreter({
+    "+": number_operator(6, "left", add),
+    "|": {
+      kind: "pipe",
+      precedence: 1,
+      direction: "left",
+      arity: 2,
+      apply(value: unknown, fn: unknown) {
+        if (typeof fn !== "function") {
+          throw new TypeError("expected a function");
+        }
+
+        return fn(value);
+      },
+    },
+  }, {
+    values: {
+      double(value: unknown) {
+        return Number(value) * 2;
+      },
+      maybe: undefined,
+      one: 1,
+      trim(value: unknown) {
+        return String(value).trim();
+      },
+      upper(value: unknown) {
+        return String(value).toUpperCase();
+      },
+    },
+  });
+  const dynamic = assert_raw_runner(calc.raw("? | trim | upper"));
+
+  assert_equals(calc("one + ?0", 41), 42);
+  assert_equals(calc("? | double", 21), 42);
+  assert_equals(calc("' hi ' | trim | upper"), "HI");
+  assert_equals(dynamic(" hi "), "HI");
+  assert_equals(calc("maybe"), undefined);
+  assert_equals(calc.values.one, 1);
+  assert_equals(calc.get_value("one"), 1);
+  assert_equals(calc.get_value("missing"), undefined);
+  assert_equals(
+    assert_raw_error(
+      calc.raw("missing + one"),
+      "missing values should fail raw",
+    )
+      .summary,
+    "value `missing` is not defined",
+  );
+});
+
 Deno.test("interpreter accepts whitespace wherever token boundaries allow it", () => {
   assert_equals(terp(" \t\n 2 \n + \t 3 \r\n * 4 \t "), 14);
   assert_equals(terp("(\n1 + 2\n) *\t3"), 9);
@@ -271,6 +322,27 @@ Deno.test("operator registries reject tokens that conflict with parser syntax", 
     catch_type_error(() => operators({ '"': number_operator(1, "left", add) }))
       .message.includes("reserved syntax"),
     "quote operator tokens should be rejected",
+  );
+});
+
+Deno.test("interpreter value registries reject invalid and ambiguous names", () => {
+  assert_type_error_message(
+    () => interpreter(standard_operators, { values: { "bad name": 1 } }),
+    "valid identifier",
+    "value names need to be parseable as bare identifiers",
+  );
+  assert_type_error_message(
+    () => interpreter(standard_operators, { values: { true: 1 } }),
+    "reserved for boolean literals",
+    "boolean literals should not be shadowed by named values",
+  );
+  assert_type_error_message(
+    () =>
+      interpreter({ add: number_operator(6, "left", add) }, {
+        values: { add: 1 },
+      }),
+    "must not conflict with an operator token",
+    "operator and value names should stay unambiguous",
   );
 });
 
@@ -621,6 +693,10 @@ const expect_interpreter_type_errors = () => {
   terp('"unterminated');
   // @ts-expect-error Question marks inside strings must not create runners.
   const question_runner: StringRunner<StandardOperators, "'?'"> = terp("'?'");
+  const named = interpreter(standard_operators, { values: { one: 1 } });
+  named("one + ?");
+  // @ts-expect-error Unknown bare names need to be registered as values.
+  named("missing + one");
   void question_runner;
 };
 

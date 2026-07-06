@@ -119,6 +119,36 @@ words("neg ?", 42); // -42
 words("~?0 ~ ?1", 20, 62); // 42
 ```
 
+Add named values when an interpreter should expose constants or functions as
+part of the DSL vocabulary:
+
+```ts
+const pipeline = interpreter({
+  "|": operator({
+    kind: "pipe",
+    precedence: 1,
+    direction: "left",
+    arity: 2,
+    apply(value, fn) {
+      if (typeof fn !== "function") {
+        throw new TypeError("expected a function");
+      }
+
+      return fn(value);
+    },
+  }),
+}, {
+  values: {
+    greeting: " hello ",
+    trim: (value: unknown) => String(value).trim(),
+    upper: (value: unknown) => String(value).toUpperCase(),
+  },
+});
+
+pipeline("greeting | trim | upper"); // "HELLO"
+pipeline("? | trim | upper", " hi "); // "HI"
+```
+
 Operators can run arbitrary JavaScript or TypeScript functions. The parser only
 decides where the operands are; the operator body is normal code:
 
@@ -256,7 +286,7 @@ for placeholders, and quotes are reserved for string literals.
 - `terp` is the default interpreter with numeric, string, equality, ordering,
   and boolean operators.
 - `interpreter(registry, options?)` creates a callable interpreter from an
-  operator registry.
+  operator registry, with optional named `values` for bare identifiers.
 - `interpreter(...).raw(expression)` creates a runtime expression runner or
   returns an `InterpreterError` with `summary` and `errors` when the expression
   is invalid.

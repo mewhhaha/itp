@@ -8,6 +8,12 @@ import {
   type StandardOperators,
 } from "./operators.ts";
 
+/** Map of names that can be used as bare values inside an interpreter. */
+export type ValueRegistry = Readonly<Record<string, unknown>>;
+
+/** Empty named-value registry used by interpreters without `options.values`. */
+export type EmptyValueRegistry = Record<never, never>;
+
 type Whitespace = " " | "\n" | "\r" | "\t";
 
 type LowercaseLetter =
@@ -181,52 +187,65 @@ type ParenthesizedOperatorToken<
 > = operator extends string ? `(${operator})`
   : never;
 
+type ValueToken<values extends ValueRegistry> = keyof values & string;
+
 type ReferenceSyntax<reference extends string> = Digits<Trim<reference>> extends
   true ? true
   : Identifier<Trim<reference>>;
 
-type StringOperandSyntax<operators extends OperatorRegistry, operand> =
-  ValueStringSyntax<operators, operand> extends true ? true
-    : operand extends string
-      ? [UnaryStringSyntax<operators, Trim<operand>>] extends [never] ? false
-      : true
-    : false;
+type StringOperandSyntax<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  operand,
+> = ValueStringSyntax<operators, values, operand> extends true ? true
+  : operand extends string
+    ? [UnaryStringSyntax<operators, values, Trim<operand>>] extends [never]
+      ? false
+    : true
+  : false;
 
 type UnaryStringSyntax<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   operator = OperatorTokenWithArity<operators, 1>,
 > = operator extends string
   ? Trim<expression> extends `${operator}${infer operand}`
-    ? StringOperandSyntax<operators, operand> extends true ? true
+    ? StringOperandSyntax<operators, values, operand> extends true ? true
     : never
   : never
   : never;
 
-type ValueStringSyntax<operators extends OperatorRegistry, operand> =
-  operand extends string ? Trim<operand> extends "" ? false
-    : Trim<operand> extends "?" ? true
-    : Trim<operand> extends `?${infer reference}` ? ReferenceSyntax<reference>
-    : Trim<operand> extends `${number}` ? true
-    : Trim<operand> extends "true" | "false" ? true
-    : StringLiteral<Trim<operand>> extends true ? true
-    : Trim<operand> extends ParenthesizedOperatorToken<operators> ? true
-    : Trim<operand> extends `(${infer expression})`
-      ? [StringSyntax<operators, expression>] extends [never] ? false
-      : true
-    : false
-    : false;
+type ValueStringSyntax<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  operand,
+> = operand extends string ? Trim<operand> extends "" ? false
+  : Trim<operand> extends "?" ? true
+  : Trim<operand> extends `?${infer reference}` ? ReferenceSyntax<reference>
+  : Trim<operand> extends `${number}` ? true
+  : Trim<operand> extends "true" | "false" ? true
+  : StringLiteral<Trim<operand>> extends true ? true
+  : Trim<operand> extends ValueToken<values> ? true
+  : Trim<operand> extends ParenthesizedOperatorToken<operators> ? true
+  : Trim<operand> extends `(${infer expression})`
+    ? [StringSyntax<operators, values, expression>] extends [never] ? false
+    : true
+  : false
+  : false;
 
 type BinaryStringSyntax<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
 > = operator extends string
-  ? BinaryStringSyntaxForOperator<operators, Trim<expression>, operator>
+  ? BinaryStringSyntaxForOperator<operators, values, Trim<expression>, operator>
   : never;
 
 type BinaryStringSyntaxForOperator<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   operator extends string,
   prefix extends string = "",
@@ -236,10 +255,15 @@ type BinaryStringSyntaxForOperator<
     operator,
     `${prefix}${left}`,
     right
-  > extends true
-    ? BinaryStringTailSyntax<operators, `${prefix}${left}`, right> extends
-      infer syntax ? [syntax] extends [never] ? BinaryStringSyntaxForOperator<
+  > extends true ? BinaryStringTailSyntax<
+      operators,
+      values,
+      `${prefix}${left}`,
+      right
+    > extends infer syntax
+      ? [syntax] extends [never] ? BinaryStringSyntaxForOperator<
           operators,
+          values,
           right,
           operator,
           `${prefix}${left}${operator}`
@@ -248,6 +272,7 @@ type BinaryStringSyntaxForOperator<
     : never
   : BinaryStringSyntaxForOperator<
     operators,
+    values,
     right,
     operator,
     `${prefix}${left}${operator}`
@@ -256,14 +281,20 @@ type BinaryStringSyntaxForOperator<
 
 type BinaryStringHasReference<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
-> = operator extends string
-  ? BinaryStringHasReferenceForOperator<operators, Trim<expression>, operator>
+> = operator extends string ? BinaryStringHasReferenceForOperator<
+    operators,
+    values,
+    Trim<expression>,
+    operator
+  >
   : never;
 
 type BinaryStringHasReferenceForOperator<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   operator extends string,
   prefix extends string = "",
@@ -273,22 +304,27 @@ type BinaryStringHasReferenceForOperator<
     operator,
     `${prefix}${left}`,
     right
-  > extends true
-    ? BinaryStringTailSyntax<operators, `${prefix}${left}`, right> extends
-      infer syntax
+  > extends true ? BinaryStringTailSyntax<
+      operators,
+      values,
+      `${prefix}${left}`,
+      right
+    > extends infer syntax
       ? [syntax] extends [never] ? BinaryStringHasReferenceForOperator<
           operators,
+          values,
           right,
           operator,
           `${prefix}${left}${operator}`
         >
       : Or<
-        StringOperandHasReference<operators, `${prefix}${left}`>,
-        ValueExpressionHasReference<operators, right>
+        StringOperandHasReference<operators, values, `${prefix}${left}`>,
+        ValueExpressionHasReference<operators, values, right>
       >
     : never
   : BinaryStringHasReferenceForOperator<
     operators,
+    values,
     right,
     operator,
     `${prefix}${left}${operator}`
@@ -297,27 +333,30 @@ type BinaryStringHasReferenceForOperator<
 
 type BinaryStringTailSyntax<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   left extends string,
   right extends string,
-> = StringOperandSyntax<operators, left> extends true
-  ? ValueExpressionTailSyntax<operators, right> extends true ? true
+> = StringOperandSyntax<operators, values, left> extends true
+  ? ValueExpressionTailSyntax<operators, values, right> extends true ? true
   : never
   : never;
 
 type ValueExpressionTailSyntax<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
-> = StringOperandSyntax<operators, expression> extends true ? true
-  : BinaryStringSyntax<operators, expression> extends infer syntax
+> = StringOperandSyntax<operators, values, expression> extends true ? true
+  : BinaryStringSyntax<operators, values, expression> extends infer syntax
     ? [syntax] extends [never] ? never
     : true
   : never;
 
 type StringSyntax<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
-> = StringOperandSyntax<operators, expression> extends true ? true
-  : BinaryStringSyntax<operators, expression> extends never ? never
+> = StringOperandSyntax<operators, values, expression> extends true ? true
+  : BinaryStringSyntax<operators, values, expression> extends never ? never
   : true;
 
 type StringSyntaxMessageFor<expression extends string> = StringSyntaxMessage<
@@ -330,65 +369,72 @@ type Or<left, right> = left extends true ? true
 
 type StringOperandHasReference<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   operand,
-> = ValueStringSyntax<operators, operand> extends true
-  ? ValueStringHasReference<operators, operand>
+> = ValueStringSyntax<operators, values, operand> extends true
+  ? ValueStringHasReference<operators, values, operand>
   : operand extends string
-    ? [UnaryStringHasReference<operators, Trim<operand>>] extends [never]
-      ? false
-    : UnaryStringHasReference<operators, Trim<operand>>
+    ? [UnaryStringHasReference<operators, values, Trim<operand>>] extends
+      [never] ? false
+    : UnaryStringHasReference<operators, values, Trim<operand>>
   : false;
 
 type UnaryStringHasReference<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   operator = OperatorTokenWithArity<operators, 1>,
 > = operator extends string
   ? Trim<expression> extends `${operator}${infer operand}`
-    ? StringOperandHasReference<operators, operand>
+    ? StringOperandHasReference<operators, values, operand>
   : never
   : never;
 
 type ValueStringHasReference<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   operand,
 > = operand extends string ? Trim<operand> extends "?" ? true
   : Trim<operand> extends `?${infer reference}` ? ReferenceSyntax<reference>
   : Trim<operand> extends `${number}` ? false
   : Trim<operand> extends "true" | "false" ? false
   : StringLiteral<Trim<operand>> extends true ? false
+  : Trim<operand> extends ValueToken<values> ? false
   : Trim<operand> extends ParenthesizedOperatorToken<operators> ? false
   : Trim<operand> extends `(${infer expression})`
-    ? StringExpressionHasReference<operators, expression>
+    ? StringExpressionHasReference<operators, values, expression>
   : false
   : false;
 
 type ValueExpressionHasReference<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
-> = StringOperandSyntax<operators, expression> extends true
-  ? StringOperandHasReference<operators, expression>
-  : BinaryStringHasReference<operators, expression> extends infer has_reference
-    ? [has_reference] extends [never] ? false
+> = StringOperandSyntax<operators, values, expression> extends true
+  ? StringOperandHasReference<operators, values, expression>
+  : BinaryStringHasReference<operators, values, expression> extends
+    infer has_reference ? [has_reference] extends [never] ? false
     : has_reference extends true ? true
     : false
   : false;
 
 type StringExpressionHasReference<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
-> = ValueExpressionHasReference<operators, expression>;
+> = ValueExpressionHasReference<operators, values, expression>;
 
 /** @internal */
 type StringCallResult<
   operators extends OperatorRegistry,
+  values extends ValueRegistry,
   expression extends string,
   rest extends readonly unknown[],
 > = string extends expression ? unknown
-  : StringSyntax<operators, expression> extends never
+  : StringSyntax<operators, values, expression> extends never
     ? StringSyntaxMessageFor<expression>
   : rest extends readonly []
-    ? StringExpressionHasReference<operators, expression> extends true
+    ? StringExpressionHasReference<operators, values, expression> extends true
       ? StringRunner<operators, expression>
     : unknown
   : unknown;
@@ -446,18 +492,28 @@ export type InterpreterApplyOperator = (
 ) => unknown;
 
 /** Runtime options for a string interpreter. */
-export interface InterpreterOptions {
+export interface InterpreterOptions<
+  values extends ValueRegistry = EmptyValueRegistry,
+> {
   /** Override operator application while preserving parsing and precedence. */
   readonly apply_operator?: InterpreterApplyOperator;
+  /** Named values that can be referenced directly from expressions. */
+  readonly values?: values;
 }
 
 /** Callable interpreter with its operator registry attached. */
-export type Interpreter<operators extends OperatorRegistry> = {
+export type Interpreter<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry = EmptyValueRegistry,
+> = {
   readonly operators: operators;
+  readonly values: values;
   get<const token extends keyof operators & string>(
     token: token,
   ): operators[token];
   get(token: string): OperatorEntry | undefined;
+  get_value<const name extends keyof values & string>(name: name): values[name];
+  get_value(name: string): unknown | undefined;
   /** Create a reusable runner from a dynamic expression string. */
   raw(expression: string): RawStringResult;
   <
@@ -466,30 +522,40 @@ export type Interpreter<operators extends OperatorRegistry> = {
   >(
     expression: CheckedArgument<
       expression,
-      StringCallResult<operators, expression, rest>
+      StringCallResult<operators, values, expression, rest>
     >,
     ...rest: rest
-  ): CheckedResult<StringCallResult<operators, expression, rest>>;
+  ): CheckedResult<StringCallResult<operators, values, expression, rest>>;
 };
 
 /** Create a callable interpreter from an operator registry. */
-export function interpreter<const operators extends OperatorRegistry>(
+export function interpreter<
+  const operators extends OperatorRegistry,
+  const values extends ValueRegistry = EmptyValueRegistry,
+>(
   operators: operators,
-  options: InterpreterOptions = {},
-): Interpreter<operators> {
+  options: InterpreterOptions<values> = {},
+): Interpreter<operators, values> {
   operator_registry(operators);
+  const named_values = options.values ?? ({} as values);
+  validate_value_registry(operators, named_values);
 
   const interpreter = ((expression: string, ...substitutions: unknown[]) => {
     return interpret_string_expression(
       operators,
+      named_values,
       expression,
       substitutions,
       options,
     );
-  }) as unknown as Interpreter<operators>;
+  }) as unknown as Interpreter<operators, values>;
 
   Object.defineProperty(interpreter, "operators", {
     value: operators,
+    enumerable: false,
+  });
+  Object.defineProperty(interpreter, "values", {
+    value: named_values,
     enumerable: false,
   });
   Object.defineProperty(interpreter, "get", {
@@ -498,9 +564,19 @@ export function interpreter<const operators extends OperatorRegistry>(
     },
     enumerable: false,
   });
+  Object.defineProperty(interpreter, "get_value", {
+    value(name: string) {
+      return Object.hasOwn(named_values, name) ? named_values[name] : undefined;
+    },
+    enumerable: false,
+  });
   Object.defineProperty(interpreter, "raw", {
     value(expression: string): RawStringResult {
-      const error = validate_raw_string_expression(operators, expression);
+      const error = validate_raw_string_expression(
+        operators,
+        named_values,
+        expression,
+      );
 
       if (error !== undefined) {
         return error;
@@ -509,6 +585,7 @@ export function interpreter<const operators extends OperatorRegistry>(
       return (...substitutions: unknown[]) => {
         return evaluate_string_expression(
           operators,
+          named_values,
           expression,
           substitutions,
           options,
@@ -542,6 +619,7 @@ export type RuntimeOperator = {
 };
 
 type TokenizeContext = {
+  readonly named_values: ValueRegistry;
   readonly scope: unknown;
   readonly values: readonly unknown[];
   readonly resolve_references: boolean;
@@ -550,20 +628,63 @@ type TokenizeContext = {
 
 const raw_validation_value = Symbol("terp.raw.validation.value");
 
+function validate_value_registry(
+  operators: OperatorRegistry,
+  values: ValueRegistry,
+): void {
+  for (const name of Object.keys(values)) {
+    validate_value_name(name);
+
+    if (get_operator_from(operators, name) !== undefined) {
+      throw new TypeError(
+        "interpreter value name `" + name +
+          "` must not conflict with an operator token",
+      );
+    }
+  }
+}
+
+function validate_value_name(name: string): void {
+  const identifier = read_identifier(name, 0);
+
+  if (identifier === undefined || identifier.next !== name.length) {
+    throw new TypeError(
+      "interpreter value name `" + name + "` must be a valid identifier",
+    );
+  }
+
+  if (name === "true" || name === "false") {
+    throw new TypeError(
+      "interpreter value name `" + name + "` is reserved for boolean literals",
+    );
+  }
+}
+
 function interpret_string_expression(
   operators: OperatorRegistry,
+  named_values: ValueRegistry,
   expression: string,
   substitutions: readonly unknown[],
   options: InterpreterOptions,
 ): unknown {
-  if (substitutions.length === 0 && has_reference(operators, expression)) {
+  if (
+    substitutions.length === 0 &&
+    has_reference(operators, named_values, expression)
+  ) {
     return (...values: readonly unknown[]) => {
-      return evaluate_string_expression(operators, expression, values, options);
+      return evaluate_string_expression(
+        operators,
+        named_values,
+        expression,
+        values,
+        options,
+      );
     };
   }
 
   return evaluate_string_expression(
     operators,
+    named_values,
     expression,
     substitutions,
     options,
@@ -572,14 +693,20 @@ function interpret_string_expression(
 
 function evaluate_string_expression(
   operators: OperatorRegistry,
+  named_values: ValueRegistry,
   expression: string,
   substitutions: readonly unknown[],
   options: InterpreterOptions,
 ): unknown {
-  const has_named_references = has_named_reference(operators, expression);
+  const has_named_references = has_named_reference(
+    operators,
+    named_values,
+    expression,
+  );
   const scope = has_named_references ? substitutions[0] : undefined;
   const values = has_named_references ? substitutions.slice(1) : substitutions;
   const context: TokenizeContext = {
+    named_values,
     scope,
     values,
     resolve_references: true,
@@ -597,9 +724,11 @@ function evaluate_string_expression(
 
 function validate_raw_string_expression(
   operators: OperatorRegistry,
+  named_values: ValueRegistry,
   expression: string,
 ): InterpreterError | undefined {
   const context: TokenizeContext = {
+    named_values,
     scope: undefined,
     values: [],
     resolve_references: false,
@@ -743,8 +872,36 @@ function read_value(
     return literal;
   }
 
+  const named_value = read_named_value(context.named_values, text, index);
+
+  if (named_value !== undefined) {
+    return named_value;
+  }
+
+  const name = read_identifier(text, index);
+
+  if (name !== undefined) {
+    throw new TypeError(
+      "interpreter value `" + name.name + "` is not defined",
+    );
+  }
+
   return read_parenthesized_operator_value(operators, text, index) ??
     read_parenthesized_expression(operators, text, index, context, options);
+}
+
+function read_named_value(
+  values: ValueRegistry,
+  text: string,
+  index: number,
+): { readonly value: unknown; readonly next: number } | undefined {
+  const name = read_identifier(text, index);
+
+  if (name === undefined || !Object.hasOwn(values, name.name)) {
+    return undefined;
+  }
+
+  return { value: values[name.name], next: name.next };
 }
 
 function read_parenthesized_operator_value(
@@ -881,11 +1038,17 @@ function read_literal(
     return { value: Number(number[0]), next: index + number[0].length };
   }
 
-  if (text.startsWith("true", index)) {
+  if (
+    text.startsWith("true", index) &&
+    !is_identifier_part(text[index + "true".length])
+  ) {
     return { value: true, next: index + "true".length };
   }
 
-  if (text.startsWith("false", index)) {
+  if (
+    text.startsWith("false", index) &&
+    !is_identifier_part(text[index + "false".length])
+  ) {
     return { value: false, next: index + "false".length };
   }
 
@@ -987,6 +1150,10 @@ function read_identifier(
   }
 
   return { name: match[0], next: index + match[0].length };
+}
+
+function is_identifier_part(character: string | undefined): boolean {
+  return character !== undefined && /^[A-Za-z0-9_$]$/.test(character);
 }
 
 function read_operator(
@@ -1332,6 +1499,7 @@ function skip_whitespace(text: string, index: number): number {
 
 function has_reference(
   operators: OperatorRegistry,
+  named_values: ValueRegistry,
   expression: string,
 ): boolean {
   let index = 0;
@@ -1364,6 +1532,14 @@ function has_reference(
         continue;
       }
 
+      const named_value = read_named_value(named_values, expression, index);
+
+      if (named_value !== undefined) {
+        index = named_value.next;
+        expecting_value = false;
+        continue;
+      }
+
       const operator_value = read_parenthesized_operator_value(
         operators,
         expression,
@@ -1383,7 +1559,13 @@ function has_reference(
           return false;
         }
 
-        if (has_reference(operators, expression.slice(index + 1, close))) {
+        if (
+          has_reference(
+            operators,
+            named_values,
+            expression.slice(index + 1, close),
+          )
+        ) {
           return true;
         }
 
@@ -1410,6 +1592,7 @@ function has_reference(
 
 function has_named_reference(
   operators: OperatorRegistry,
+  named_values: ValueRegistry,
   expression: string,
 ): boolean {
   let index = 0;
@@ -1449,6 +1632,14 @@ function has_named_reference(
         continue;
       }
 
+      const named_value = read_named_value(named_values, expression, index);
+
+      if (named_value !== undefined) {
+        index = named_value.next;
+        expecting_value = false;
+        continue;
+      }
+
       const operator_value = read_parenthesized_operator_value(
         operators,
         expression,
@@ -1469,7 +1660,11 @@ function has_named_reference(
         }
 
         if (
-          has_named_reference(operators, expression.slice(index + 1, close))
+          has_named_reference(
+            operators,
+            named_values,
+            expression.slice(index + 1, close),
+          )
         ) {
           return true;
         }

@@ -149,6 +149,55 @@ Deno.test("raw validation does not execute custom operators or apply hooks", () 
   delete global_record[attack_key];
 });
 
+Deno.test("raw validation does not execute named function values", () => {
+  const attack_key = "__terp_raw_value_attack__";
+  const global_record = globalThis as unknown as Record<string, unknown>;
+  delete global_record[attack_key];
+  let value_calls = 0;
+
+  const pipeline = interpreter({
+    "|": {
+      kind: "pipe",
+      precedence: 1,
+      direction: "left",
+      arity: 2,
+      apply(input: unknown, fn: unknown) {
+        if (typeof fn !== "function") {
+          throw new TypeError("expected a function");
+        }
+
+        return fn(input);
+      },
+    },
+  }, {
+    values: {
+      boom(input: unknown) {
+        value_calls += 1;
+        global_record[attack_key] = true;
+        return input;
+      },
+    },
+  });
+
+  const runner = pipeline.raw("? | boom");
+
+  assert_true(
+    typeof runner === "function",
+    "raw should compile expressions that reference named functions",
+  );
+  assert_equals(value_calls, 0);
+  assert_equals(global_record[attack_key], undefined);
+
+  if (runner instanceof Error) {
+    throw runner;
+  }
+
+  assert_equals(runner("value"), "value");
+  assert_equals(value_calls, 1);
+  assert_equals(global_record[attack_key], true);
+  delete global_record[attack_key];
+});
+
 function apply_runtime_operator(
   operator: RuntimeOperator,
   operands: readonly unknown[],

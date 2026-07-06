@@ -24,6 +24,18 @@ const shell = interpreter({
     return value;
   }),
   "|": pipe_operator(),
+}, {
+  values: {
+    basename,
+    count,
+    first: head(1),
+    greeting: "  hello from terp  ",
+    grep_error: grep("error"),
+    join_comma: join(", "),
+    lines,
+    trim,
+    upper,
+  },
 });
 
 const log = [
@@ -34,7 +46,7 @@ const log = [
   "error cache",
 ].join("\n");
 
-const user_pipeline = shell.raw("? | 'lines' | 'grep:error' | 'count'");
+const user_pipeline = shell.raw("? | lines | grep_error | count");
 
 if (user_pipeline instanceof Error) {
   console.error(user_pipeline.summary);
@@ -42,10 +54,10 @@ if (user_pipeline instanceof Error) {
 }
 
 console.log("bash-like", {
-  greeting: shell('echo "  hello from terp  " | "trim" | "upper"'),
-  first_error: shell("? | 'lines' | 'grep:error' | 'head:1' | 'join:, '", log),
+  greeting: shell("echo greeting | trim | upper"),
+  first_error: shell("? | lines | grep_error | first | join_comma", log),
   error_count: user_pipeline(log),
-  home_name: shell('env "HOME" | "basename"'),
+  home_name: shell('env "HOME" | basename'),
 });
 
 function pipe_operator(): BinaryOperatorDefinition<"shell"> {
@@ -55,47 +67,17 @@ function pipe_operator(): BinaryOperatorDefinition<"shell"> {
     direction: "left",
     arity: 2,
     apply(input, command) {
-      return command_from(command)(input);
+      if (!is_command(command)) {
+        throw new TypeError("expected a command function");
+      }
+
+      return command(input);
     },
   };
 }
 
-function command_from(command: unknown): Command {
-  const spec = as_string(command);
-  const separator = spec.indexOf(":");
-  const name = separator === -1 ? spec : spec.slice(0, separator);
-  const argument = separator === -1 ? "" : spec.slice(separator + 1);
-
-  switch (name) {
-    case "trim":
-      return (input) => as_string(input).trim();
-    case "upper":
-      return (input) => as_string(input).toUpperCase();
-    case "lines":
-      return (input) =>
-        as_string(input).split(/\r?\n/).filter((line) => {
-          return line.length > 0;
-        });
-    case "grep":
-      return (input) =>
-        as_lines(input).filter((line) => {
-          return line.includes(argument);
-        });
-    case "head":
-      return (input) => as_lines(input).slice(0, Number(argument));
-    case "count":
-      return (input) => as_lines(input).length;
-    case "join":
-      return (input) => as_lines(input).join(argument || "\n");
-    case "basename":
-      return (input) => {
-        const parts = as_string(input).split("/");
-
-        return parts[parts.length - 1] ?? "";
-      };
-    default:
-      throw new TypeError("unknown command `" + name + "`");
-  }
+function is_command(value: unknown): value is Command {
+  return typeof value === "function";
 }
 
 function as_string(value: unknown): string {
@@ -104,6 +86,45 @@ function as_string(value: unknown): string {
   }
 
   throw new TypeError("expected a string");
+}
+
+function trim(input: unknown): string {
+  return as_string(input).trim();
+}
+
+function upper(input: unknown): string {
+  return as_string(input).toUpperCase();
+}
+
+function lines(input: unknown): readonly string[] {
+  return as_string(input).split(/\r?\n/).filter((line) => {
+    return line.length > 0;
+  });
+}
+
+function grep(needle: string): Command {
+  return (input) =>
+    as_lines(input).filter((line) => {
+      return line.includes(needle);
+    });
+}
+
+function head(size: number): Command {
+  return (input) => as_lines(input).slice(0, size);
+}
+
+function count(input: unknown): number {
+  return as_lines(input).length;
+}
+
+function join(separator: string): Command {
+  return (input) => as_lines(input).join(separator);
+}
+
+function basename(input: unknown): string {
+  const parts = as_string(input).split("/");
+
+  return parts[parts.length - 1] ?? "";
 }
 
 function as_lines(value: unknown): readonly string[] {
