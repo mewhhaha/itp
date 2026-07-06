@@ -22,10 +22,10 @@ Number literal support follows TypeScript's `${number}` string shape for finite
 numbers, including decimal, scientific, hexadecimal, binary, and octal forms.
 String literals support escapes for `\\`, `\"`, `\'`, `\n`, `\r`, and `\t`.
 
-## `itp`
+## `terp`
 
 ```ts
-import { itp } from "jsr:@mewhhaha/itp";
+import { terp } from "jsr:@mewhhaha/terp";
 ```
 
 The default interpreter includes:
@@ -39,18 +39,18 @@ The default interpreter includes:
 Examples:
 
 ```ts
-itp("2 + 3 * 4"); // 14
-itp("? + ?", 20, 22); // 42
-itp("?0 + ?0", 21); // 42
-itp("(1 + 2) * 3"); // 9
-itp("-?0", 42); // -42
-itp("!false"); // true
-itp('"hello" ++ "world"'); // "helloworld"
+terp("2 + 3 * 4"); // 14
+terp("? + ?", 20, 22); // 42
+terp("?0 + ?0", 21); // 42
+terp("(1 + 2) * 3"); // 9
+terp("-?0", 42); // -42
+terp("!false"); // true
+terp('"hello" ++ "world"'); // "helloworld"
 
-const add = itp("? + ?");
+const add = terp("? + ?");
 add(1, 2); // 3
 
-itp("(+)") === itp.get("+"); // true
+terp("(+)") === terp.get("+"); // true
 ```
 
 Indexed placeholders are zero-based and can reuse the same value. They advance
@@ -87,6 +87,7 @@ const double = calc.raw(expression_from_user);
 
 if (double instanceof Error) {
   console.error(double.summary);
+  console.error(double.errors);
   throw double;
 }
 

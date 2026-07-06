@@ -418,17 +418,23 @@ export type RawStringResult = RawStringRunner | InterpreterError;
 export class InterpreterError extends Error {
   /** Short user-facing description of what went wrong. */
   readonly summary: string;
+  /** One or more underlying errors that contributed to this failure. */
+  readonly errors: readonly Error[];
   /** Original error that produced this interpreter error. */
   override readonly cause: unknown;
 
   /** Create an interpreter error with a short summary and optional cause. */
   constructor(
     summary: string,
-    options: { readonly cause?: unknown } = {},
+    options: {
+      readonly cause?: unknown;
+      readonly errors?: readonly Error[];
+    } = {},
   ) {
     super(summary);
     this.name = "InterpreterError";
     this.summary = summary;
+    this.errors = options.errors ?? errors_from_cause(options.cause);
     this.cause = options.cause;
   }
 }
@@ -516,7 +522,7 @@ export function interpreter<const operators extends OperatorRegistry>(
 }
 
 /** Default interpreter using {@link standard_operators}. */
-export const itp: Interpreter<StandardOperators> = interpreter(
+export const terp: Interpreter<StandardOperators> = interpreter(
   standard_operators,
 );
 
@@ -542,7 +548,7 @@ type TokenizeContext = {
   value_index: number;
 };
 
-const raw_validation_value = Symbol("itp.raw.validation.value");
+const raw_validation_value = Symbol("terp.raw.validation.value");
 
 function interpret_string_expression(
   operators: OperatorRegistry,
@@ -621,14 +627,26 @@ function interpreter_error_from(error: unknown): InterpreterError {
   if (error instanceof Error) {
     return new InterpreterError(summarize_error_message(error.message), {
       cause: error,
+      errors: [error],
     });
   }
 
-  return new InterpreterError(String(error), { cause: error });
+  return new InterpreterError(String(error), {
+    cause: error,
+    errors: [new Error(String(error))],
+  });
 }
 
 function summarize_error_message(message: string): string {
   return message.replace(/^interpreter\s+/, "");
+}
+
+function errors_from_cause(cause: unknown): readonly Error[] {
+  if (cause instanceof Error) {
+    return [cause];
+  }
+
+  return [];
 }
 
 function evaluate_text(

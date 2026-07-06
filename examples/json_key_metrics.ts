@@ -1,4 +1,4 @@
-import { itp } from "../mod.ts";
+import { terp } from "../mod.ts";
 import metrics from "./data/metrics.json" with { type: "json" };
 
 type Scope = Record<string, unknown>;
@@ -11,7 +11,7 @@ const reports = metrics.accounts.map((account) => {
   }
 
   for (const [name, expression] of Object.entries(metrics.derived)) {
-    scope[name] = itp(expression, scope);
+    scope[name] = terp(expression, scope);
   }
 
   return {
@@ -39,7 +39,7 @@ function named_placeholder(key: string): string {
 }
 
 function evaluate_number(expression: string, scope: Scope): number {
-  const value = itp(expression, scope);
+  const value = terp(expression, scope);
 
   if (typeof value !== "number") {
     throw new TypeError(

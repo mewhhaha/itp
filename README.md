@@ -1,37 +1,52 @@
-# itp
+# terp
 
 Small typed expression interpreters for TypeScript and Deno.
 
-`itp` evaluates string expressions against an operator table. Operators are not
+`terp` evaluates string expressions against an operator table. Operators are not
 hardcoded into the parser, so each interpreter can choose its own symbols,
 words, precedence, and associativity.
+
+## Name
+
+A [terp](https://en.wikipedia.org/wiki/Terp) is an artificial dwelling mound
+used as safe ground during storm surges, high tides, and flooding. The name is a
+small nod to building your own raised little language on top of ordinary
+TypeScript.
+
+<p align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Hallig_Hooge_2005.jpg/640px-Hallig_Hooge_2005.jpg" alt="Terp on the Hallig of Hooge" width="520">
+</p>
+
+<p align="center">
+  <sub>Image: <a href="https://commons.wikimedia.org/wiki/File:Hallig_Hooge_2005.jpg">Sandra Buhmann via Wikimedia Commons</a>, CC BY-SA 2.5.</sub>
+</p>
 
 ## Install
 
 ```ts
-import { itp } from "jsr:@mewhhaha/itp";
+import { terp } from "jsr:@mewhhaha/terp";
 ```
 
 ## Quick Start
 
 ```ts
-import { itp } from "jsr:@mewhhaha/itp";
+import { terp } from "jsr:@mewhhaha/terp";
 
-itp("2 + 3 * 4"); // 14
-itp("10 - 3 - 2"); // 5
-itp("true || false && false"); // true
-itp("? + ?", 20, 22); // 42
-itp("(1 + 2) * 3"); // 9
-itp("-?0", 42); // -42
-itp("!false"); // true
-itp('"hello" ++ "world"'); // "helloworld"
+terp("2 + 3 * 4"); // 14
+terp("10 - 3 - 2"); // 5
+terp("true || false && false"); // true
+terp("? + ?", 20, 22); // 42
+terp("(1 + 2) * 3"); // 9
+terp("-?0", 42); // -42
+terp("!false"); // true
+terp('"hello" ++ "world"'); // "helloworld"
 ```
 
 When a literal expression contains placeholders and no values are passed, the
 interpreter returns a reusable runner:
 
 ```ts
-const add = itp("? + ?");
+const add = terp("? + ?");
 
 add(20, 22); // 42
 add(1, 2); // 3
@@ -39,14 +54,15 @@ add(1, 2); // 3
 
 For expressions that come from a runtime source, use `raw`. It skips literal
 type checking and returns either a reusable function or an `Error` with a
-`summary`:
+`summary` and `errors`:
 
 ```ts
 const expression_from_user: string = "?0 + ?0";
-const double = itp.raw(expression_from_user);
+const double = terp.raw(expression_from_user);
 
 if (double instanceof Error) {
   console.error(double.summary);
+  console.error(double.errors);
   throw double;
 }
 
@@ -56,15 +72,15 @@ double(21); // 42
 Named placeholders read from the first value:
 
 ```ts
-itp("?left + ?right * ?", { left: 2, right: 3 }, 4); // 14
+terp("?left + ?right * ?", { left: 2, right: 3 }, 4); // 14
 ```
 
 Indexed placeholders read positional values by zero-based index and can reuse
 the same value:
 
 ```ts
-itp("?0 + ?0", 21); // 42
-itp("?1 - ?0", 20, 62); // 42
+terp("?0 + ?0", 21); // 42
+terp("?1 - ?0", 20, 62); // 42
 ```
 
 Wrap a registered operator token in parentheses when you need the operator
@@ -72,7 +88,7 @@ definition as a value. The parenthesized form is parser syntax and does not need
 to be registered separately:
 
 ```ts
-itp("(+)") === itp.get("+"); // true
+terp("(+)") === terp.get("+"); // true
 ```
 
 ## Custom Interpreters
@@ -85,7 +101,7 @@ import {
   number_operator,
   number_unary_operator,
   operator,
-} from "jsr:@mewhhaha/itp";
+} from "jsr:@mewhhaha/terp";
 
 const words = interpreter({
   add: number_operator(6, "left", (left, right) => left + right),
@@ -112,7 +128,7 @@ import {
   type InfixDirection,
   interpreter,
   type UnaryOperatorDefinition,
-} from "jsr:@mewhhaha/itp";
+} from "jsr:@mewhhaha/terp";
 
 type Guard<value> = (value: unknown) => value is value;
 type UnaryFunction = (value: unknown) => unknown;
@@ -237,12 +253,13 @@ for placeholders, and quotes are reserved for string literals.
 
 ## API
 
-- `itp` is the default interpreter with numeric, string, equality, ordering, and
-  boolean operators.
+- `terp` is the default interpreter with numeric, string, equality, ordering,
+  and boolean operators.
 - `interpreter(registry, options?)` creates a callable interpreter from an
   operator registry.
 - `interpreter(...).raw(expression)` creates a runtime expression runner or
-  returns an `InterpreterError` with a `summary` when the expression is invalid.
+  returns an `InterpreterError` with `summary` and `errors` when the expression
+  is invalid.
 - `operators(registry)` validates and preserves a reusable registry when you
   want to define it separately from `interpreter(...)`.
 - `operator(definition, ...overloads)` preserves a single operator definition or
@@ -256,8 +273,9 @@ See [docs/api.md](docs/api.md) for more detail.
 
 ## Examples
 
-The [examples](examples) folder contains small DSLs for pricing, approval rules,
-and JSON-driven metric calculations. Run them all with:
+The [examples](examples) folder contains small DSLs for pricing, shell-like
+pipelines, approval rules, and JSON-driven metric calculations. Run them all
+with:
 
 ```sh
 deno task examples

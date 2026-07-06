@@ -1,6 +1,6 @@
 # Examples
 
-These examples show `itp` as a small DSL toolkit rather than only a calculator.
+These examples show `terp` as a small DSL toolkit rather than only a calculator.
 Run all of them with:
 
 ```sh
@@ -16,6 +16,12 @@ rule.
 
 Shows operators that call arbitrary JavaScript functions, plus reusable generic
 operator helpers that validate custom domain values with type guards.
+
+## `bash_like_dsl.ts`
+
+Builds a tiny shell-style pipeline DSL with `|`, prefix commands such as
+`echo`/`env`, command specs such as `"grep:error"`, and `raw(...)` for a
+user-authored pipeline.
 
 ## `rules_engine.ts`
 

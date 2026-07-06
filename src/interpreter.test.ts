@@ -6,7 +6,6 @@ import {
   has_operator_kind,
   interpreter,
   InterpreterError,
-  itp,
   number_operator,
   number_unary_operator,
   operator,
@@ -16,13 +15,14 @@ import {
   type StandardOperators,
   string_operator,
   type StringRunner,
+  terp,
   unary_operator,
 } from "../mod.ts";
 
 Deno.test("interpreter evaluates registered infix operators with precedence", () => {
-  assert_equals(itp("2 + 3 * 4"), 14);
-  assert_equals(itp("10 - 3 - 2"), 5);
-  assert_equals(itp("true || false && false"), true);
+  assert_equals(terp("2 + 3 * 4"), 14);
+  assert_equals(terp("10 - 3 - 2"), 5);
+  assert_equals(terp("true || false && false"), true);
 });
 
 Deno.test("interpreter accepts plain registry objects", () => {
@@ -37,9 +37,9 @@ Deno.test("interpreter accepts plain registry objects", () => {
 });
 
 Deno.test("interpreter accepts whitespace wherever token boundaries allow it", () => {
-  assert_equals(itp(" \t\n 2 \n + \t 3 \r\n * 4 \t "), 14);
-  assert_equals(itp("(\n1 + 2\n) *\t3"), 9);
-  assert_equals(itp("!\nfalse"), true);
+  assert_equals(terp(" \t\n 2 \n + \t 3 \r\n * 4 \t "), 14);
+  assert_equals(terp("(\n1 + 2\n) *\t3"), 9);
+  assert_equals(terp("!\nfalse"), true);
 
   const word_itp = interpreter(operators({
     add: number_operator(6, "left", add),
@@ -50,32 +50,32 @@ Deno.test("interpreter accepts whitespace wherever token boundaries allow it", (
 });
 
 Deno.test("interpreter parses standalone literals without coercion", () => {
-  assert_equals(itp("0"), 0);
-  assert_equals(itp("-0"), -0);
-  assert_equals(itp("+1.5"), 1.5);
-  assert_equals(itp("true"), true);
-  assert_equals(itp("false"), false);
-  assert_equals(itp('"hello"'), "hello");
-  assert_equals(itp("'hello'"), "hello");
+  assert_equals(terp("0"), 0);
+  assert_equals(terp("-0"), -0);
+  assert_equals(terp("+1.5"), 1.5);
+  assert_equals(terp("true"), true);
+  assert_equals(terp("false"), false);
+  assert_equals(terp('"hello"'), "hello");
+  assert_equals(terp("'hello'"), "hello");
 });
 
 Deno.test("interpreter preserves standard arithmetic and boolean expectations", () => {
-  assert_equals(itp("8 / 2 % 3"), 1);
-  assert_equals(itp("2 + 3 * -4"), -10);
-  assert_equals(itp("--2"), 2);
-  assert_equals(itp("2*-3"), -6);
-  assert_equals(itp("1--2"), 3);
-  assert_equals(itp("!(true || false)"), false);
-  assert_equals(itp("!true || true"), true);
-  assert_equals(itp("1 < 2 && 2 < 3"), true);
-  assert_equals(itp("(1 < 2) == true"), true);
+  assert_equals(terp("8 / 2 % 3"), 1);
+  assert_equals(terp("2 + 3 * -4"), -10);
+  assert_equals(terp("--2"), 2);
+  assert_equals(terp("2*-3"), -6);
+  assert_equals(terp("1--2"), 3);
+  assert_equals(terp("!(true || false)"), false);
+  assert_equals(terp("!true || true"), true);
+  assert_equals(terp("1 < 2 && 2 < 3"), true);
+  assert_equals(terp("(1 < 2) == true"), true);
 });
 
 Deno.test("interpreter supports placeholders named references and runners", () => {
-  const add = itp("? + ?");
-  const double_first = itp("?0 + ?0");
-  const named_runner = itp("?left + ?");
-  const named = itp("?left + ?right * ?", {
+  const add = terp("? + ?");
+  const double_first = terp("?0 + ?0");
+  const named_runner = terp("?left + ?");
+  const named = terp("?left + ?right * ?", {
     left: 2,
     right: 3,
   }, 4);
@@ -83,29 +83,29 @@ Deno.test("interpreter supports placeholders named references and runners", () =
   assert_equals(add(20, 22), 42);
   assert_equals(double_first(21), 42);
   assert_equals(named, 14);
-  assert_equals(itp("? + ?", 20, 22), 42);
-  assert_equals(itp("?0 + ?0", 21), 42);
-  assert_equals(itp("?1 - ?0", 20, 62), 42);
-  assert_equals(itp("?2", "first", "second", "third"), "third");
-  assert_equals(itp("?0 + ?", 20, 22), 42);
-  assert_equals(itp("(?1 - ?0) * ?0", 2, 23), 42);
-  assert_equals(itp("?left + ?0", { left: 20 }, 22), 42);
-  assert_equals(itp("?0 + ?left", { left: 22 }, 20), 42);
-  assert_equals(itp("?left + ?", { left: 20 }, 22), 42);
+  assert_equals(terp("? + ?", 20, 22), 42);
+  assert_equals(terp("?0 + ?0", 21), 42);
+  assert_equals(terp("?1 - ?0", 20, 62), 42);
+  assert_equals(terp("?2", "first", "second", "third"), "third");
+  assert_equals(terp("?0 + ?", 20, 22), 42);
+  assert_equals(terp("(?1 - ?0) * ?0", 2, 23), 42);
+  assert_equals(terp("?left + ?0", { left: 20 }, 22), 42);
+  assert_equals(terp("?0 + ?left", { left: 22 }, 20), 42);
+  assert_equals(terp("?left + ?", { left: 20 }, 22), 42);
   assert_equals(named_runner({ left: 20 }, 22), 42);
 });
 
 Deno.test("interpreter raw creates runners from dynamic expression strings", () => {
   const double_expression: string = "?0 + ?0";
-  const double = assert_raw_runner(itp.raw(double_expression));
-  const named = assert_raw_runner(itp.raw("?left + ?"));
-  const literal = assert_raw_runner(itp.raw("1 + 2 * 3"));
+  const double = assert_raw_runner(terp.raw(double_expression));
+  const named = assert_raw_runner(terp.raw("?left + ?"));
+  const literal = assert_raw_runner(terp.raw("1 + 2 * 3"));
 
   assert_equals(double(21), 42);
   assert_equals(named({ left: 20 }, 22), 42);
   assert_equals(literal(), 7);
   assert_equals(
-    assert_raw_runner(itp.raw('"hello" ++ " " ++ ?'))("world"),
+    assert_raw_runner(terp.raw('"hello" ++ " " ++ ?'))("world"),
     "hello world",
   );
   assert_type_error_message(
@@ -116,19 +116,25 @@ Deno.test("interpreter raw creates runners from dynamic expression strings", () 
 });
 
 Deno.test("interpreter raw returns errors for invalid dynamic strings", () => {
-  const trailing = itp.raw("1 +");
-  const unknown = itp.raw("? ** ?");
-  const bad_group = itp.raw("(1 + 2");
-  const bad_placeholder = itp.raw("?999999999999999999999");
+  const trailing = terp.raw("1 +");
+  const unknown = terp.raw("? ** ?");
+  const bad_group = terp.raw("(1 + 2");
+  const bad_placeholder = terp.raw("?999999999999999999999");
+  const trailing_error = assert_raw_error(
+    trailing,
+    "trailing operators should fail raw",
+  );
 
   assert_true(
     trailing instanceof Error,
     "raw errors should still be Error instances",
   );
   assert_equals(
-    assert_raw_error(trailing, "trailing operators should fail raw").summary,
+    trailing_error.summary,
     "expression is missing a value",
   );
+  assert_equals(trailing_error.errors.length, 1);
+  assert_equals(trailing_error.errors[0], trailing_error.cause);
   assert_equals(
     assert_raw_error(unknown, "unknown operators should fail raw").summary,
     "expected a registered operator at `** ?`",
@@ -145,16 +151,28 @@ Deno.test("interpreter raw returns errors for invalid dynamic strings", () => {
     "placeholder index `999999999999999999999` is too large",
   );
   assert_true(
-    assert_raw_error(trailing, "trailing operators should fail raw")
-      .cause instanceof
+    trailing_error.cause instanceof
       TypeError,
     "raw errors should retain the underlying cause",
   );
 });
 
+Deno.test("interpreter errors can carry several underlying errors", () => {
+  const first = new TypeError("first");
+  const second = new SyntaxError("second");
+  const error = new InterpreterError("several issues", {
+    cause: first,
+    errors: [first, second],
+  });
+
+  assert_equals(error.summary, "several issues");
+  assert_equals(error.errors, [first, second]);
+  assert_equals(error.cause, first);
+});
+
 Deno.test("interpreter raw validates syntax without operand type checks", () => {
-  const string_plus = itp.raw('"hello" + "world"');
-  const dynamic_number = itp.raw("? + ?");
+  const string_plus = terp.raw('"hello" + "world"');
+  const dynamic_number = terp.raw("? + ?");
 
   assert_true(
     !(string_plus instanceof Error),
@@ -206,7 +224,7 @@ Deno.test("interpreter keeps operators in the registry instead of callable prope
 });
 
 Deno.test("operator registry helpers work with single definitions and overloads", () => {
-  assert_equals(get_operator_from(standard_operators, "+"), itp.get("+"));
+  assert_equals(get_operator_from(standard_operators, "+"), terp.get("+"));
   assert_equals(has_operator_kind(standard_operators, "+", "number"), true);
   assert_equals(has_operator_kind(standard_operators, "++", "string"), true);
   assert_equals(has_operator_kind(standard_operators, "!", "boolean"), true);
@@ -216,7 +234,7 @@ Deno.test("operator registry helpers work with single definitions and overloads"
   );
   assert_equals(first_operator_token(standard_operators, "string"), "++");
 
-  const overloaded = itp.get("-");
+  const overloaded = terp.get("-");
 
   assert_true(
     Array.isArray(overloaded),
@@ -294,26 +312,26 @@ Deno.test("interpreter supports custom symbolic operators", () => {
 
   assert_equals(math_itp("2 ** 3 ** 2"), 512);
   assert_equals(math_itp("? ** ?", 2, 5), 32);
-  assert_equals(itp.get("**"), undefined);
+  assert_equals(terp.get("**"), undefined);
 });
 
 Deno.test("interpreter supports unary operators", () => {
-  assert_equals(itp("-?0", 42), -42);
-  assert_equals(itp("-(?0 + ?1)", 20, 22), -42);
-  assert_equals(itp("1 - -2"), 3);
-  assert_equals(itp("!false"), true);
-  assert_equals(itp("!!true"), true);
-  assert_equals(itp("!true == false"), true);
-  assert_equals(itp("(-)"), itp.get("-"));
+  assert_equals(terp("-?0", 42), -42);
+  assert_equals(terp("-(?0 + ?1)", 20, 22), -42);
+  assert_equals(terp("1 - -2"), 3);
+  assert_equals(terp("!false"), true);
+  assert_equals(terp("!!true"), true);
+  assert_equals(terp("!true == false"), true);
+  assert_equals(terp("(-)"), terp.get("-"));
 });
 
 Deno.test("interpreter respects unary and binary precedence combinations", () => {
-  assert_equals(itp("-2 * 3"), -6);
-  assert_equals(itp("-(2 * 3)"), -6);
-  assert_equals(itp("-2 * -3"), 6);
-  assert_equals(itp("!(1 < 2) == false"), true);
-  assert_equals(itp("!(-1 == -1)"), false);
-  assert_equals(itp("!!(1 < 2)"), true);
+  assert_equals(terp("-2 * 3"), -6);
+  assert_equals(terp("-(2 * 3)"), -6);
+  assert_equals(terp("-2 * -3"), 6);
+  assert_equals(terp("!(1 < 2) == false"), true);
+  assert_equals(terp("!(-1 == -1)"), false);
+  assert_equals(terp("!!(1 < 2)"), true);
 });
 
 Deno.test("interpreter supports custom unary operators and overloads", () => {
@@ -374,52 +392,52 @@ Deno.test("interpreter treats parenthesized operator values as syntax", () => {
     add: number_operator(6, "left", (left, right) => left + right),
   }));
 
-  assert_equals(itp.get("(+)"), undefined);
-  assert_equals(itp("(+)"), itp.get("+"));
-  assert_equals(itp("(!=)"), itp.get("!="));
+  assert_equals(terp.get("(+)"), undefined);
+  assert_equals(terp("(+)"), terp.get("+"));
+  assert_equals(terp("(!=)"), terp.get("!="));
   assert_equals(word_itp.get("(add)"), undefined);
   assert_equals(word_itp("(add)"), word_itp.get("add"));
-  assert_equals(itp("((!))"), itp.get("!"));
-  assert_equals(itp("((-))"), itp.get("-"));
+  assert_equals(terp("((!))"), terp.get("!"));
+  assert_equals(terp("((-))"), terp.get("-"));
 });
 
 Deno.test("interpreter supports grouped expressions", () => {
-  assert_equals(itp("(1 + 2) * 3"), 9);
-  assert_equals(itp("1 * (2 + 3)"), 5);
-  assert_equals(itp("((1 + 2) * (3 + 4))"), 21);
-  assert_equals(itp("(? + ?) * ?", 1, 2, 3), 9);
-  assert_equals(itp("((+))"), itp.get("+"));
-  assert_equals(itp("('a' ++ ('b' ++ 'c'))"), "abc");
-  assert_equals(itp("!(false || (true && false))"), true);
+  assert_equals(terp("(1 + 2) * 3"), 9);
+  assert_equals(terp("1 * (2 + 3)"), 5);
+  assert_equals(terp("((1 + 2) * (3 + 4))"), 21);
+  assert_equals(terp("(? + ?) * ?", 1, 2, 3), 9);
+  assert_equals(terp("((+))"), terp.get("+"));
+  assert_equals(terp("('a' ++ ('b' ++ 'c'))"), "abc");
+  assert_equals(terp("!(false || (true && false))"), true);
 });
 
 Deno.test("interpreter number syntax matches TypeScript number strings", () => {
-  assert_equals(itp("1e3 + 2"), 1002);
-  assert_equals(itp("1E3 + 2"), 1002);
-  assert_equals(itp("1e-3 + 1"), 1.001);
-  assert_equals(itp("+.5 + .25"), 0.75);
-  assert_equals(itp("1. + 2"), 3);
-  assert_equals(itp(".5 + 1"), 1.5);
-  assert_equals(itp("0x10 + 1"), 17);
-  assert_equals(itp("0b10 + 1"), 3);
-  assert_equals(itp("0o10 + 1"), 9);
+  assert_equals(terp("1e3 + 2"), 1002);
+  assert_equals(terp("1E3 + 2"), 1002);
+  assert_equals(terp("1e-3 + 1"), 1.001);
+  assert_equals(terp("+.5 + .25"), 0.75);
+  assert_equals(terp("1. + 2"), 3);
+  assert_equals(terp(".5 + 1"), 1.5);
+  assert_equals(terp("0x10 + 1"), 17);
+  assert_equals(terp("0b10 + 1"), 3);
+  assert_equals(terp("0o10 + 1"), 9);
 });
 
 Deno.test("interpreter supports quoted strings and string concatenation", () => {
-  assert_equals(itp('"hello"'), "hello");
-  assert_equals(itp("'hello'"), "hello");
-  assert_equals(itp('"hello" ++ "world"'), "helloworld");
-  assert_equals(itp("'hello' ++ ' ' ++ \"world\""), "hello world");
-  assert_equals(itp('"line\\n" ++ "tab\\t"'), "line\ntab\t");
-  assert_equals(itp("'it\\'s'"), "it's");
-  assert_equals(itp('"say \\"hi\\""'), 'say "hi"');
-  assert_equals(itp("'slash\\\\'"), "slash\\");
-  assert_equals(itp('"carriage\\rreturn"'), "carriage\rreturn");
-  assert_equals(itp("'?'"), "?");
-  assert_equals(itp("'?name' ++ ?", "value"), "?namevalue");
-  assert_equals(itp("'1 + 2' ++ ' = text'"), "1 + 2 = text");
+  assert_equals(terp('"hello"'), "hello");
+  assert_equals(terp("'hello'"), "hello");
+  assert_equals(terp('"hello" ++ "world"'), "helloworld");
+  assert_equals(terp("'hello' ++ ' ' ++ \"world\""), "hello world");
+  assert_equals(terp('"line\\n" ++ "tab\\t"'), "line\ntab\t");
+  assert_equals(terp("'it\\'s'"), "it's");
+  assert_equals(terp('"say \\"hi\\""'), 'say "hi"');
+  assert_equals(terp("'slash\\\\'"), "slash\\");
+  assert_equals(terp('"carriage\\rreturn"'), "carriage\rreturn");
+  assert_equals(terp("'?'"), "?");
+  assert_equals(terp("'?name' ++ ?", "value"), "?namevalue");
+  assert_equals(terp("'1 + 2' ++ ' = text'"), "1 + 2 = text");
   assert_true(
-    catch_type_error(() => itp('"hello" + "world"')).message.includes(
+    catch_type_error(() => terp('"hello" + "world"')).message.includes(
       "expected a number",
     ),
     "+ should remain numeric-only",
@@ -431,59 +449,59 @@ Deno.test("interpreter accepts JavaScript-interpolated expression strings", () =
   const m = 22;
   const s = "hello";
 
-  assert_equals(itp(`${n} + ${m}`), 42);
-  assert_equals(itp(`"${s}" ++ " world"`), "hello world");
+  assert_equals(terp(`${n} + ${m}`), 42);
+  assert_equals(terp(`"${s}" ++ " world"`), "hello world");
   assert_type_error_message(
-    () => itp(`"${s}" + "world"`),
+    () => terp(`"${s}" + "world"`),
     "expected a number",
     "interpolated quoted strings should still use string operators",
   );
 });
 
 Deno.test("interpreter reports placeholder arity and preserves undefined values", () => {
-  assert_equals(itp("?", undefined), undefined);
-  assert_equals(itp("?0", undefined), undefined);
-  assert_equals(itp("? == ?", undefined, undefined), true);
+  assert_equals(terp("?", undefined), undefined);
+  assert_equals(terp("?0", undefined), undefined);
+  assert_equals(terp("? == ?", undefined, undefined), true);
   assert_true(
-    catch_type_error(() => itp("?")()).message.includes(
+    catch_type_error(() => terp("?")()).message.includes(
       "missing a value for placeholder `1`",
     ),
     "missing placeholder values should be reported precisely",
   );
   assert_true(
-    catch_type_error(() => itp("? + ?", 1)).message.includes(
+    catch_type_error(() => terp("? + ?", 1)).message.includes(
       "missing a value for placeholder `2`",
     ),
     "missing later placeholder values should include the placeholder index",
   );
   assert_true(
-    catch_type_error(() => itp("?2", "first", "second")).message.includes(
+    catch_type_error(() => terp("?2", "first", "second")).message.includes(
       "missing a value for placeholder `?2`",
     ),
     "missing indexed values should include the placeholder index",
   );
   assert_true(
-    catch_type_error(() => itp("?", 1, 2)).message.includes("too many values"),
+    catch_type_error(() => terp("?", 1, 2)).message.includes("too many values"),
     "extra placeholder values should still be rejected",
   );
   assert_true(
-    catch_type_error(() => itp("?0 + ?0", 1, 2)).message.includes(
+    catch_type_error(() => terp("?0 + ?0", 1, 2)).message.includes(
       "too many values",
     ),
     "extra values after the highest indexed placeholder should be rejected",
   );
   assert_type_error_message(
-    () => itp("?missing", {}),
+    () => terp("?missing", {}),
     "scope is missing `missing`",
     "missing named scope properties should identify the name",
   );
   assert_type_error_message(
-    () => itp("?missing", undefined),
+    () => terp("?missing", undefined),
     "expected a scope object",
     "named placeholders should require an object scope",
   );
   assert_type_error_message(
-    () => itp("?999999999999999999999", 1),
+    () => terp("?999999999999999999999", 1),
     "too large",
     "unsafe indexed placeholders should be rejected",
   );
@@ -525,7 +543,7 @@ Deno.test("interpreter reports useful syntax and literal errors", () => {
     "empty expressions should be rejected",
   );
   assert_type_error_message(
-    () => itp("1 +"),
+    () => terp("1 +"),
     "missing a value",
     "trailing binary operators should be rejected",
   );
@@ -598,11 +616,11 @@ Deno.test("interpreter apply hooks can replace standard operator semantics", () 
 
 const expect_interpreter_type_errors = () => {
   // @ts-expect-error Parenthesized values still need registered operators.
-  itp("(**)");
+  terp("(**)");
   // @ts-expect-error String literals must close with the same quote.
-  itp('"unterminated');
+  terp('"unterminated');
   // @ts-expect-error Question marks inside strings must not create runners.
-  const question_runner: StringRunner<StandardOperators, "'?'"> = itp("'?'");
+  const question_runner: StringRunner<StandardOperators, "'?'"> = terp("'?'");
   void question_runner;
 };
 
@@ -616,7 +634,7 @@ function evaluate_dynamic(
   expression: string,
   ...values: readonly unknown[]
 ): unknown {
-  return itp(expression, ...values);
+  return terp(expression, ...values);
 }
 
 function catch_type_error(fn: () => unknown): TypeError {

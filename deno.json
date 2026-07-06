@@ -1,5 +1,5 @@
 {
-  "name": "@mewhhaha/itp",
+  "name": "@mewhhaha/terp",
   "version": "0.1.0",
   "license": "MIT",
   "exports": {
@@ -27,7 +27,7 @@
     "ci": "deno task fmt:check && deno task lint && deno task doc:lint && deno task check && deno task test && deno task examples && deno task publish:dry-run",
     "check": "deno check mod.ts src/*.test.ts examples/*.ts",
     "doc:lint": "deno doc --lint mod.ts",
-    "examples": "deno run examples/pricing_dsl.ts && deno run examples/functions_dsl.ts && deno run examples/rules_engine.ts && deno run examples/json_key_metrics.ts",
+    "examples": "deno run examples/pricing_dsl.ts && deno run examples/functions_dsl.ts && deno run examples/bash_like_dsl.ts && deno run examples/rules_engine.ts && deno run examples/json_key_metrics.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",
