@@ -33,3 +33,18 @@ prefix operators.
 Imports `data/metrics.json`, turns configured JSON key names into named
 placeholder expressions such as `?new_revenue + ?expansion_revenue`, and then
 feeds each row object into the interpreter.
+
+## `feature_flags.ts`
+
+Builds a feature flag targeting DSL with country membership, plan checks,
+employee overrides, tags, and deterministic percentage rollout.
+
+## `form_validation.ts`
+
+Composes reusable field validators with `passes`, `and`, and `or`, producing a
+validation result that accumulates all errors instead of short-circuiting.
+
+## `applicative_parser.ts`
+
+Uses parser values as DSL operands and Megaparsec-style operators such as `<$>`,
+`<*>`, `<*`, `*>`, `<|>`, `many`, and `some` to build small parsers.

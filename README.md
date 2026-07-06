@@ -69,6 +69,29 @@ if (double instanceof Error) {
 double(21); // 42
 ```
 
+When runtime expressions are assembled from smaller pieces, validate each piece
+as an interpreter fragment and compose the final expression with `raw` as a
+tagged template. Template interpolations must be fragments from the same
+interpreter, and the final expression is validated before a runner is returned:
+
+```ts
+// Given a custom pipeline interpreter with named values `trim` and `upper`:
+const trim = pipeline.fragment("trim");
+const upper = pipeline.fragment("upper");
+
+if (trim instanceof Error || upper instanceof Error) {
+  throw trim instanceof Error ? trim : upper;
+}
+
+const normalize = pipeline.raw`? | ${trim} | ${upper}`;
+
+if (normalize instanceof Error) {
+  throw normalize;
+}
+
+normalize(" hello "); // "HELLO"
+```
+
 Named placeholders read from the first value:
 
 ```ts
@@ -294,6 +317,8 @@ directions, and non-callable `apply` hooks.
   and boolean operators.
 - `interpreter(registry, options?)` creates a callable interpreter from an
   operator registry, with optional named `values` for bare identifiers.
+- `interpreter(...).fragment(expression)` validates a runtime expression string
+  for safe composition in `raw` tagged templates.
 - `interpreter(...).raw(expression)` creates a runtime expression runner or
   returns an `InterpreterError` with `summary` and `errors` when the expression
   is invalid.
@@ -311,8 +336,8 @@ See [docs/api.md](docs/api.md) for more detail.
 ## Examples
 
 The [examples](examples) folder contains small DSLs for pricing, shell-like
-pipelines, approval rules, and JSON-driven metric calculations. Run them all
-with:
+pipelines, approval rules, JSON-driven metric calculations, feature flags, form
+validation, and applicative parser combinators. Run them all with:
 
 ```sh
 deno task examples

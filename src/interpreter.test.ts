@@ -1,6 +1,7 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import {
   boolean_unary_operator,
+  type ExpressionFragment,
   first_operator_token,
   get_operator_from,
   has_operator_kind,
@@ -185,6 +186,77 @@ Deno.test("interpreter raw creates runners from dynamic expression strings", () 
     () => named({}, 22),
     "scope is missing `left`",
     "raw runners should still report runtime argument errors",
+  );
+});
+
+Deno.test("interpreter fragments validate dynamic pieces for raw templates", () => {
+  const pipeline = interpreter({
+    "|": {
+      kind: "pipe",
+      precedence: 1,
+      direction: "left",
+      arity: 2,
+      apply(input: unknown, fn: unknown) {
+        if (typeof fn !== "function") {
+          throw new TypeError("expected a function");
+        }
+
+        return fn(input);
+      },
+    },
+  }, {
+    values: {
+      trim(value: unknown) {
+        return String(value).trim();
+      },
+      upper(value: unknown) {
+        return String(value).toUpperCase();
+      },
+    },
+  });
+  const trim = assert_fragment(pipeline.fragment("trim"));
+  const upper = assert_fragment(pipeline.fragment("upper"));
+  const runner = assert_raw_runner(pipeline.raw`? | ${trim} | ${upper}`);
+
+  assert_equals(trim.expression, "trim");
+  assert_equals(String(trim), "trim");
+  assert_equals(runner(" hi "), "HI");
+  assert_equals(
+    assert_raw_error(
+      pipeline.fragment("missing"),
+      "invalid fragments should report raw validation errors",
+    ).summary,
+    "value `missing` is not defined",
+  );
+});
+
+Deno.test("interpreter raw templates reject unsafe fragment composition", () => {
+  const first = assert_fragment(terp.fragment("?"));
+  const second = assert_fragment(terp.fragment("?"));
+  const foreign = assert_fragment(
+    interpreter(standard_operators).fragment("1"),
+  );
+
+  assert_equals(
+    assert_raw_error(
+      terp.raw`${first} ${second}`,
+      "invalid composed expressions should fail raw validation",
+    ).summary,
+    "expected a registered operator at `?`",
+  );
+  assert_equals(
+    assert_raw_error(
+      terp.raw`${foreign} + 1`,
+      "foreign fragments should fail template composition",
+    ).summary,
+    "raw template interpolations must be fragments from this interpreter",
+  );
+  assert_equals(
+    assert_raw_error(
+      (terp.raw as unknown as (expression: unknown) => unknown)({}),
+      "malformed raw template calls should fail safely",
+    ).summary,
+    "raw template expected a string array",
   );
 });
 
@@ -866,7 +938,7 @@ function assert_raw_runner(value: RawStringRunner | Error): RawStringRunner {
 }
 
 function assert_raw_error(
-  value: RawStringRunner | Error,
+  value: unknown,
   message: string,
 ): InterpreterError {
   if (value instanceof InterpreterError) {
@@ -874,4 +946,19 @@ function assert_raw_error(
   }
 
   throw new Error(message);
+}
+
+function assert_fragment(
+  value: ExpressionFragment | Error,
+  message = "Expected expression fragment",
+): ExpressionFragment {
+  if (value instanceof Error) {
+    throw value;
+  }
+
+  if (typeof value.toString !== "function") {
+    throw new Error(message);
+  }
+
+  return value;
 }

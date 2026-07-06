@@ -460,6 +460,22 @@ export type RawStringRunner = (...values: unknown[]) => unknown;
 /** Result of compiling a runtime-only expression with {@link Interpreter.raw}. */
 export type RawStringResult = RawStringRunner | InterpreterError;
 
+/**
+ * Runtime expression fragment validated by {@link Interpreter.fragment}.
+ *
+ * Fragments stringify to their original expression so they can be composed in
+ * template strings and then compiled with {@link Interpreter.raw}.
+ */
+export type ExpressionFragment = {
+  /** Original validated expression text. */
+  readonly expression: string;
+  /** Return the original validated expression text. */
+  toString(): string;
+};
+
+/** Result of validating a runtime expression fragment. */
+export type ExpressionFragmentResult = ExpressionFragment | InterpreterError;
+
 /** Error returned when a runtime-only expression cannot be compiled. */
 export class InterpreterError extends Error {
   /** Short user-facing description of what went wrong. */
@@ -514,8 +530,15 @@ export type Interpreter<
   get(token: string): OperatorEntry | undefined;
   get_value<const name extends keyof values & string>(name: name): values[name];
   get_value(name: string): unknown | undefined;
+  /** Validate a runtime expression string for later composition. */
+  fragment(expression: string): ExpressionFragmentResult;
   /** Create a reusable runner from a dynamic expression string. */
   raw(expression: string): RawStringResult;
+  /** Compose validated expression fragments and create a reusable runner. */
+  raw(
+    strings: TemplateStringsArray,
+    ...fragments: readonly ExpressionFragment[]
+  ): RawStringResult;
   <
     const expression extends string,
     const rest extends readonly unknown[],
@@ -570,8 +593,42 @@ export function interpreter<
     },
     enumerable: false,
   });
+  Object.defineProperty(interpreter, "fragment", {
+    value(expression: string): ExpressionFragmentResult {
+      const error = validate_raw_string_expression(
+        operators,
+        named_values,
+        expression,
+      );
+
+      if (error !== undefined) {
+        return error;
+      }
+
+      return expression_fragment(operators, named_values, expression);
+    },
+    enumerable: false,
+  });
   Object.defineProperty(interpreter, "raw", {
-    value(expression: string): RawStringResult {
+    value(
+      expression: string | TemplateStringsArray,
+      ...fragments: readonly ExpressionFragment[]
+    ): RawStringResult {
+      if (typeof expression !== "string") {
+        const composed = compose_fragment_template(
+          operators,
+          named_values,
+          expression,
+          fragments,
+        );
+
+        if (composed instanceof InterpreterError) {
+          return composed;
+        }
+
+        expression = composed;
+      }
+
       const error = validate_raw_string_expression(
         operators,
         named_values,
@@ -627,6 +684,16 @@ type TokenizeContext = {
 };
 
 const raw_validation_value = Symbol("terp.raw.validation.value");
+const expression_fragment_brand = Symbol("terp.expression.fragment");
+
+type ExpressionFragmentMetadata = {
+  readonly operators: OperatorRegistry;
+  readonly named_values: ValueRegistry;
+};
+
+type InternalExpressionFragment = ExpressionFragment & {
+  readonly [expression_fragment_brand]: ExpressionFragmentMetadata;
+};
 
 function validate_value_registry(
   operators: OperatorRegistry,
@@ -746,6 +813,101 @@ function validate_raw_string_expression(
   }
 
   return undefined;
+}
+
+function expression_fragment(
+  operators: OperatorRegistry,
+  named_values: ValueRegistry,
+  expression: string,
+): ExpressionFragment {
+  const fragment = {
+    expression,
+    toString() {
+      return expression;
+    },
+  } as InternalExpressionFragment;
+
+  Object.defineProperty(fragment, expression_fragment_brand, {
+    value: { operators, named_values },
+    enumerable: false,
+  });
+
+  return Object.freeze(fragment);
+}
+
+function compose_fragment_template(
+  operators: OperatorRegistry,
+  named_values: ValueRegistry,
+  strings: TemplateStringsArray,
+  fragments: readonly ExpressionFragment[],
+): string | InterpreterError {
+  if (!Array.isArray(strings)) {
+    return interpreter_error_from(
+      new TypeError("interpreter raw template expected a string array"),
+    );
+  }
+
+  if (strings.length !== fragments.length + 1) {
+    return interpreter_error_from(
+      new TypeError(
+        "interpreter raw template expected one more string than fragment",
+      ),
+    );
+  }
+
+  for (const text of strings) {
+    if (typeof text !== "string") {
+      return interpreter_error_from(
+        new TypeError("interpreter raw template expected string chunks"),
+      );
+    }
+  }
+
+  let expression = strings[0];
+
+  for (let index = 0; index < fragments.length; index += 1) {
+    const metadata = expression_fragment_metadata(fragments[index]);
+
+    if (
+      metadata === undefined ||
+      metadata.operators !== operators ||
+      metadata.named_values !== named_values
+    ) {
+      return interpreter_error_from(
+        new TypeError(
+          "interpreter raw template interpolations must be fragments from " +
+            "this interpreter",
+        ),
+      );
+    }
+
+    expression += fragments[index].expression + strings[index + 1];
+  }
+
+  return expression;
+}
+
+function expression_fragment_metadata(
+  fragment: ExpressionFragment,
+): ExpressionFragmentMetadata | undefined {
+  if (typeof fragment !== "object" || fragment === null) {
+    return undefined;
+  }
+
+  const metadata = (fragment as Partial<InternalExpressionFragment>)[
+    expression_fragment_brand
+  ];
+
+  if (
+    typeof metadata !== "object" ||
+    metadata === null ||
+    metadata.operators === undefined ||
+    metadata.named_values === undefined
+  ) {
+    return undefined;
+  }
+
+  return metadata;
 }
 
 function interpreter_error_from(error: unknown): InterpreterError {

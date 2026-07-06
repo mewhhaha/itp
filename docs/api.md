@@ -81,6 +81,7 @@ value also exposes:
 - `calc.values`
 - `calc.get(token)`
 - `calc.get_value(name)`
+- `calc.fragment(expression)`
 - `calc.raw(expression)`
 
 Operator tokens are not copied onto the callable interpreter as properties. This
@@ -126,6 +127,31 @@ if (double instanceof Error) {
 
 double(21); // 42
 ```
+
+Use `fragment` when runtime-authored pieces need to be validated before being
+assembled into a larger expression. Fragments stringify to their original
+expression, but `raw` also works as a tagged template and rejects interpolations
+that are not fragments from the same interpreter:
+
+```ts
+const left = calc.fragment("?0 add ?1");
+const right = calc.fragment("answer");
+
+if (left instanceof Error || right instanceof Error) {
+  throw left instanceof Error ? left : right;
+}
+
+const runner = calc.raw`${left} add ${right}`;
+
+if (runner instanceof Error) {
+  throw runner;
+}
+
+runner(20, 22); // 84
+```
+
+The final composed expression is validated before `raw` returns a runner, so a
+bad combination still returns an `InterpreterError`.
 
 `options.apply_operator` can replace the default operator application step:
 
