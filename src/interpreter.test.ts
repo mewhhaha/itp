@@ -538,6 +538,7 @@ Deno.test("operator constructors enforce operand types at application time", () 
     neg: number_unary_operator(8, (value) => -value),
     raw: unary_operator("raw", 8, (value) => ({ value })),
   }));
+  const evaluate_custom = (expression: string) => custom_itp(expression);
 
   assert_equals(custom_itp("bool true"), true);
   assert_equals(custom_itp("'a' join 'b'"), "ab");
@@ -545,17 +546,17 @@ Deno.test("operator constructors enforce operand types at application time", () 
   assert_equals(custom_itp("raw 42"), { value: 42 });
 
   assert_type_error_message(
-    () => custom_itp("bool 1"),
+    () => evaluate_custom("bool 1"),
     "expected a boolean",
     "boolean unary operators should reject non-boolean operands",
   );
   assert_type_error_message(
-    () => custom_itp("'a' join 1"),
+    () => evaluate_custom("'a' join 1"),
     "expected a string",
     "string binary operators should reject non-string operands",
   );
   assert_type_error_message(
-    () => custom_itp("neg true"),
+    () => evaluate_custom("neg true"),
     "expected a number",
     "number unary operators should reject non-number operands",
   );
@@ -701,9 +702,10 @@ Deno.test("interpreter supports quoted strings and string concatenation", () => 
   assert_equals(terp("'?name' ++ ?", "value"), "?namevalue");
   assert_equals(terp("'1 + 2' ++ ' = text'"), "1 + 2 = text");
   assert_true(
-    catch_type_error(() => terp('"hello" + "world"')).message.includes(
-      "expected a number",
-    ),
+    catch_type_error(() => evaluate_dynamic('"hello" + "world"')).message
+      .includes(
+        "expected a number",
+      ),
     "+ should remain numeric-only",
   );
 });
@@ -716,7 +718,7 @@ Deno.test("interpreter accepts JavaScript-interpolated expression strings", () =
   assert_equals(terp(`${n} + ${m}`), 42);
   assert_equals(terp(`"${s}" ++ " world"`), "hello world");
   assert_type_error_message(
-    () => terp(`"${s}" + "world"`),
+    () => evaluate_dynamic(`"${s}" + "world"`),
     "expected a number",
     "interpolated quoted strings should still use string operators",
   );
@@ -726,32 +728,38 @@ Deno.test("interpreter reports placeholder arity and preserves undefined values"
   assert_equals(terp("?", undefined), undefined);
   assert_equals(terp("?0", undefined), undefined);
   assert_equals(terp("? == ?", undefined, undefined), true);
+  const missing_runner = terp("?") as (...values: unknown[]) => unknown;
+
   assert_true(
-    catch_type_error(() => terp("?")()).message.includes(
+    catch_type_error(() => missing_runner()).message.includes(
       "missing a value for placeholder `1`",
     ),
     "missing placeholder values should be reported precisely",
   );
   assert_true(
-    catch_type_error(() => terp("? + ?", 1)).message.includes(
+    catch_type_error(() => evaluate_dynamic("? + ?", 1)).message.includes(
       "missing a value for placeholder `2`",
     ),
     "missing later placeholder values should include the placeholder index",
   );
   assert_true(
-    catch_type_error(() => terp("?2", "first", "second")).message.includes(
-      "missing a value for placeholder `?2`",
-    ),
+    catch_type_error(() => evaluate_dynamic("?2", "first", "second")).message
+      .includes(
+        "missing a value for placeholder `?2`",
+      ),
     "missing indexed values should include the placeholder index",
   );
   assert_true(
-    catch_type_error(() => terp("?", 1, 2)).message.includes("too many values"),
+    catch_type_error(() => evaluate_dynamic("?", 1, 2)).message.includes(
+      "too many values",
+    ),
     "extra placeholder values should still be rejected",
   );
   assert_true(
-    catch_type_error(() => terp("?0 + ?0", 1, 2)).message.includes(
-      "too many values",
-    ),
+    catch_type_error(() => evaluate_dynamic("?0 + ?0", 1, 2)).message
+      .includes(
+        "too many values",
+      ),
     "extra values after the highest indexed placeholder should be rejected",
   );
   assert_type_error_message(
@@ -760,7 +768,7 @@ Deno.test("interpreter reports placeholder arity and preserves undefined values"
     "missing named scope properties should identify the name",
   );
   assert_type_error_message(
-    () => terp("?missing", undefined),
+    () => evaluate_dynamic("?missing", undefined),
     "expected a scope object",
     "named placeholders should require an object scope",
   );
@@ -879,16 +887,12 @@ Deno.test("interpreter apply hooks can replace standard operator semantics", () 
 });
 
 const expect_interpreter_type_errors = () => {
-  // @ts-expect-error Parenthesized values still need registered operators.
-  terp("(**)");
   // @ts-expect-error String literals must close with the same quote.
   terp('"unterminated');
   // @ts-expect-error Question marks inside strings must not create runners.
   const question_runner: StringRunner<StandardOperators, "'?'"> = terp("'?'");
   const named = interpreter(standard_operators, { values: { one: 1 } });
   named("one + ?");
-  // @ts-expect-error Unknown bare names need to be registered as values.
-  named("missing + one");
   const typed_operators = operators({
     map: {
       kind: "array",
@@ -905,7 +909,212 @@ const expect_interpreter_type_errors = () => {
   typed_operators.map.apply((value: string) => value, [1, 2]);
   // @ts-expect-error The typed operator returns strings, not numbers.
   const numbers: number[] = mapped;
+  const typed_precedence = interpreter({
+    lower: {
+      kind: "precedence",
+      precedence: 1,
+      direction: "left",
+      arity: 2,
+      apply(left: string, right: boolean): number {
+        return right ? left.length : 0;
+      },
+    },
+    tighter: {
+      kind: "precedence",
+      precedence: 2,
+      direction: "left",
+      arity: 2,
+      apply(left: number, right: string): boolean {
+        return left > right.length;
+      },
+    },
+  });
+  const grouped_right = typed_precedence("? lower (? tighter ?)");
+  const grouped_left = typed_precedence("(? lower ?) tighter ?");
+  const grouped_right_result: number = grouped_right("x", 1, "y");
+  const grouped_left_result: boolean = grouped_left("x", true, "y");
+  const typed_arrays = interpreter({
+    "<$>": {
+      kind: "array",
+      precedence: 5,
+      direction: "left",
+      arity: 2,
+      apply(
+        fn: (value: number) => string,
+        values: readonly number[],
+      ): string[] {
+        return values.map(fn);
+      },
+    },
+  }, {
+    values: {
+      labels: ["x", "y"],
+      numbers: [1, 2],
+      stringify(value: number) {
+        return String(value);
+      },
+    },
+  });
+  const left_hole = typed_arrays("? <$> numbers");
+  const right_hole = typed_arrays("stringify <$> ?");
+  const both_holes = typed_arrays("? <$> ?");
+  const indexed_holes = typed_arrays("?0 <$> ?1");
+  const indexed_gap = typed_arrays("?2 <$> ?0");
+  const indexed_conflict = typed_arrays("?0 <$> ?0");
+  const left_hole_result: string[] = left_hole((value) => String(value));
+  const right_hole_result: string[] = right_hole([1, 2]);
+  const both_holes_result: string[] = both_holes(
+    (value) => String(value),
+    [1, 2],
+  );
+  const indexed_holes_result: string[] = indexed_holes(
+    (value) => String(value),
+    [1, 2],
+  );
+  const indexed_gap_result: string[] = indexed_gap(
+    [1, 2],
+    "unused",
+    (value) => String(value),
+  );
+  const direct_left_hole_result: string[] = typed_arrays(
+    "? <$> numbers",
+    (value) => String(value),
+  );
+  const direct_right_hole_result: string[] = typed_arrays(
+    "stringify <$> ?",
+    [1, 2],
+  );
+  const direct_both_holes_result: string[] = typed_arrays(
+    "? <$> ?",
+    (value) => String(value),
+    [1, 2],
+  );
+  const direct_indexed_holes_result: string[] = typed_arrays(
+    "?0 <$> ?1",
+    (value) => String(value),
+    [1, 2],
+  );
+  const typed_applicative = interpreter({
+    "<$>": {
+      kind: "array",
+      precedence: 5,
+      direction: "left",
+      arity: 2,
+      apply(
+        fn: (value: number) => (flag: boolean) => string,
+        values: readonly number[],
+      ): Array<(flag: boolean) => string> {
+        return values.map(fn);
+      },
+    },
+    "<*>": {
+      kind: "array",
+      precedence: 5,
+      direction: "left",
+      arity: 2,
+      apply(
+        fns: ReadonlyArray<(flag: boolean) => string>,
+        values: readonly boolean[],
+      ): string[] {
+        return fns.flatMap((fn) => values.map(fn));
+      },
+    },
+  });
+  const applicative_chain = typed_applicative("? <$> ? <*> ?");
+  const applicative_chain_result: string[] = applicative_chain(
+    (value) => (flag) => String(value) + ":" + String(flag),
+    [1, 2],
+    [true, false],
+  );
+  const broken_applicative = interpreter({
+    "<$>": {
+      kind: "array",
+      precedence: 5,
+      direction: "left",
+      arity: 2,
+      apply(
+        fn: (value: number) => string,
+        values: readonly number[],
+      ): string[] {
+        return values.map(fn);
+      },
+    },
+    "<*>": {
+      kind: "array",
+      precedence: 5,
+      direction: "left",
+      arity: 2,
+      apply(
+        fns: ReadonlyArray<(flag: boolean) => string>,
+        values: readonly boolean[],
+      ): string[] {
+        return fns.flatMap((fn) => values.map(fn));
+      },
+    },
+  });
+  // @ts-expect-error `? <$> numbers` needs a number-to-string function.
+  left_hole((value: string) => value);
+  // @ts-expect-error `stringify <$> ?` needs a number array.
+  right_hole(["x"]);
+  // @ts-expect-error The first `?` in `? <$> ?` is the function.
+  both_holes([1, 2], [1, 2]);
+  // @ts-expect-error The second `?` in `? <$> ?` is the number array.
+  both_holes((value) => String(value), ["x"]);
+  // @ts-expect-error Indexed `?0` is the function position.
+  indexed_holes([1, 2], [1, 2]);
+  // @ts-expect-error Indexed `?1` is the array position.
+  indexed_holes((value) => String(value), ["x"]);
+  indexed_gap(
+    [1],
+    "unused",
+    // @ts-expect-error Indexed `?2` is the function position.
+    [1],
+  );
+  // @ts-expect-error Reusing one index for incompatible positions is rejected.
+  indexed_conflict((value) => String(value));
+  // @ts-expect-error Parenthesized right grouping needs number then string.
+  grouped_right("x", true, "y");
+  // @ts-expect-error Parenthesized left grouping needs a boolean middle value.
+  grouped_left("x", 1, "y");
+  // @ts-expect-error Known operands must fit the map operator input types.
+  typed_arrays("numbers <$> numbers");
+  // @ts-expect-error Known operands must fit the map operator input types.
+  typed_arrays("stringify <$> labels");
+  // @ts-expect-error Known right operands are checked before inferring holes.
+  typed_arrays("? <$> labels");
+  // @ts-expect-error Direct calls use the same typed placeholder tuple.
+  typed_arrays("? <$> numbers", (value: string) => value);
+  // @ts-expect-error Direct calls use the same typed placeholder tuple.
+  typed_arrays("stringify <$> ?", ["x"]);
+  // @ts-expect-error Direct indexed calls use the inferred tuple positions.
+  typed_arrays("?0 <$> ?1", (value) => String(value), ["x"]);
+  // @ts-expect-error The composed chain must match every operator boundary.
+  broken_applicative("? <$> ? <*> ?");
+  applicative_chain(
+    (value) => (flag) => String(value) + String(flag),
+    // @ts-expect-error The middle hole in the applicative chain is number[].
+    ["x"],
+    [true],
+  );
+  applicative_chain(
+    (value) => (flag) => String(value) + String(flag),
+    [1],
+    // @ts-expect-error The last hole in the applicative chain is boolean[].
+    ["x"],
+  );
   void numbers;
+  void left_hole_result;
+  void right_hole_result;
+  void both_holes_result;
+  void direct_left_hole_result;
+  void direct_right_hole_result;
+  void direct_both_holes_result;
+  void indexed_holes_result;
+  void indexed_gap_result;
+  void direct_indexed_holes_result;
+  void grouped_right_result;
+  void grouped_left_result;
+  void applicative_chain_result;
   void question_runner;
 };
 

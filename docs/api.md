@@ -207,9 +207,23 @@ their domain types. For example, a map-style operator can be typed as
 Keep runtime guards in custom operators when expression strings or placeholders
 can supply values from untyped sources.
 
+For literal expressions, the interpreter uses those operator types to check
+known operands and infer runner arguments and direct-call arguments. For
+example, if `<$>` is typed as
+`((number) => string, readonly number[]) => string[]`, then
+`arrays("? <$> numbers")` returns a runner that expects a number-to-string
+function, `arrays("stringify <$> ?")` expects a `readonly number[]`, and
+`arrays("? <$> ?")` expects both arguments in that order. Literal chains such as
+`arrays("? <$> ? <*> ?")` infer the ordered placeholder arguments through the
+chain. Literal indexed placeholders infer tuple positions for single-digit
+indexes; larger indexes and dynamic `string` expressions remain permissive at
+the type level. Parenthesized literal subexpressions preserve their grouped
+placeholder inference.
+
 Higher precedence values bind more tightly. Binary operators with the same
 precedence must have the same associativity. `"none"` prevents chaining at the
-same precedence. Unary operators are prefix operators.
+same precedence. Unary operators are prefix operators. Parentheses group
+subexpressions and override normal precedence.
 
 Register only the infix token itself. For example, registering `+` also allows
 `(+)` as an operator value expression; `"(+)"` is not a separate registry key.

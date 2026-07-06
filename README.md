@@ -297,12 +297,30 @@ geometry("quadrant ?point", { point: { x: 3, y: 4 } }); // "NE"
 Operator precedence follows the numeric `precedence` field: higher values bind
 more tightly. Binary operators also set `direction` for same-precedence
 associativity: `"left"`, `"right"`, or `"none"`. Unary operators are prefix
-operators.
+operators. Parentheses group subexpressions and override normal precedence.
 
 Operator definitions are generic over their operand and result types, so helper
-builders can preserve signatures such as `(a -> b, a[]) -> b[]`. Expressions and
-placeholders are still runtime data, so custom operators should keep guards when
-they may receive untrusted values.
+builders can preserve signatures such as `(a -> b, readonly a[]) -> b[]`.
+Expressions and placeholders are still runtime data, so custom operators should
+keep guards when they may receive untrusted values.
+
+Literal expressions use those operator types for known operands, deferred
+runners, and direct calls:
+
+```ts
+const map = arrays("? <$> numbers");
+
+map((value) => String(value)); // `value` is number, result is string[]
+arrays("stringify <$> ?", [1, 2]); // result is string[]
+arrays("? <$> ?", (value) => String(value), [1, 2]); // result is string[]
+arrays("?0 <$> ?1", (value) => String(value), [1, 2]); // result is string[]
+arrays("? <$> ? <*> ?", make_label, [1, 2], [true, false]);
+```
+
+Dynamic `string` expressions stay permissive at the type level. Literal indexed
+placeholders infer tuple positions for single-digit indexes; larger indexes fall
+back to runtime validation. Parenthesized literal subexpressions preserve their
+grouped placeholder inference.
 
 Operator tokens are stored on the interpreter registry and looked up with
 `get(token)`. Tokens are not copied onto the callable interpreter, so custom

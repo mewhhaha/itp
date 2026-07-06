@@ -73,6 +73,8 @@ type OperatorSymbol =
   | "|"
   | "~";
 
+type StringQuote = "'" | '"';
+
 type IdentifierRest<text extends string> = text extends
   `${infer character}${infer rest}`
   ? character extends IdentifierPart ? IdentifierRest<rest>
@@ -115,18 +117,67 @@ type EndsWithOperatorSymbol<text extends string> = text extends
   `${string}${OperatorSymbol}` ? true
   : false;
 
+type BalancedParenthesesOutsideStrings<
+  text extends string,
+  stack extends readonly unknown[] = readonly [],
+  quote extends StringQuote | "" = "",
+  escaped extends boolean = false,
+> = text extends `${infer character}${infer rest}`
+  ? quote extends StringQuote
+    ? escaped extends true ? BalancedParenthesesOutsideStrings<
+        rest,
+        stack,
+        quote,
+        false
+      >
+    : character extends "\\" ? BalancedParenthesesOutsideStrings<
+        rest,
+        stack,
+        quote,
+        true
+      >
+    : character extends quote ? BalancedParenthesesOutsideStrings<
+        rest,
+        stack,
+        "",
+        false
+      >
+    : BalancedParenthesesOutsideStrings<rest, stack, quote, false>
+  : character extends StringQuote ? BalancedParenthesesOutsideStrings<
+      rest,
+      stack,
+      character,
+      false
+    >
+  : character extends "(" ? BalancedParenthesesOutsideStrings<
+      rest,
+      readonly [unknown, ...stack],
+      "",
+      false
+    >
+  : character extends ")"
+    ? stack extends readonly [unknown, ...infer remaining]
+      ? BalancedParenthesesOutsideStrings<rest, remaining, "", false>
+    : false
+  : BalancedParenthesesOutsideStrings<rest, stack, "", false>
+  : quote extends "" ? stack extends readonly [] ? true
+    : false
+  : false;
+
 type OperatorBoundary<
   operators extends OperatorRegistry,
   operator extends string,
   left extends string,
   right extends string,
-> = ContainsOperatorSymbol<operator> extends true
-  ? EndsWithOperatorSymbol<left> extends true ? false
-  : StartsWithOperatorSymbol<right> extends true
-    ? StartsWithUnaryOperator<operators, right> extends true ? true
-    : false
+> = BalancedParenthesesOutsideStrings<left> extends true
+  ? ContainsOperatorSymbol<operator> extends true
+    ? EndsWithOperatorSymbol<left> extends true ? false
+    : StartsWithOperatorSymbol<right> extends true
+      ? StartsWithUnaryOperator<operators, right> extends true ? true
+      : false
+    : true
   : true
-  : true;
+  : false;
 
 type StartsWithUnaryOperator<
   operators extends OperatorRegistry,
@@ -318,7 +369,7 @@ type BinaryStringHasReferenceForOperator<
           `${prefix}${left}${operator}`
         >
       : Or<
-        StringOperandHasReference<operators, values, `${prefix}${left}`>,
+        ValueExpressionHasReference<operators, values, `${prefix}${left}`>,
         ValueExpressionHasReference<operators, values, right>
       >
     : never
@@ -336,7 +387,7 @@ type BinaryStringTailSyntax<
   values extends ValueRegistry,
   left extends string,
   right extends string,
-> = StringOperandSyntax<operators, values, left> extends true
+> = ValueExpressionTailSyntax<operators, values, left> extends true
   ? ValueExpressionTailSyntax<operators, values, right> extends true ? true
   : never
   : never;
@@ -424,6 +475,524 @@ type StringExpressionHasReference<
   expression extends string,
 > = ValueExpressionHasReference<operators, values, expression>;
 
+type PositionalPlaceholder = {
+  readonly __itp_placeholder: "positional";
+};
+
+type NamedScopePlaceholderArg = {
+  readonly __itp_placeholder_arg: "scope";
+};
+
+type IndexedPlaceholderArg<
+  index extends string,
+  value = never,
+> = {
+  readonly __itp_placeholder_arg: "indexed";
+  readonly index: index;
+  readonly value: value;
+};
+
+type TypeEvaluation<
+  value,
+  args extends readonly unknown[],
+> = {
+  readonly value: value;
+  readonly args: args;
+};
+
+type TypeEvaluationValue<evaluation> = evaluation extends
+  TypeEvaluation<infer value, readonly unknown[]> ? value
+  : unknown;
+
+type TypeEvaluationArgs<evaluation> = evaluation extends
+  TypeEvaluation<unknown, infer args> ? args
+  : readonly unknown[];
+
+type OperatorApplyParameters<definition> = definition extends {
+  apply: (...args: infer args) => unknown;
+} ? args
+  : readonly unknown[];
+
+type OperatorApplyReturn<definition> = definition extends {
+  apply: (...args: infer _args) => infer result;
+} ? result
+  : unknown;
+
+type TypedOperatorDefinitionForArity<
+  entry,
+  arity extends 1 | 2,
+> = entry extends { readonly arity: arity } ? entry
+  : entry extends readonly unknown[]
+    ? Extract<entry[number], { readonly arity: arity }>
+  : never;
+
+type TypedOperatorDefinition<
+  operators extends OperatorRegistry,
+  token extends keyof operators & string,
+  arity extends 1 | 2,
+> = TypedOperatorDefinitionForArity<operators[token], arity>;
+
+type UnaryInput<definition> = OperatorApplyParameters<definition> extends [
+  infer value,
+  ...unknown[],
+] ? value
+  : unknown;
+
+type UnaryOutput<definition> = OperatorApplyReturn<definition>;
+
+type BinaryLeft<definition> = OperatorApplyParameters<definition> extends [
+  infer left,
+  unknown,
+  ...unknown[],
+] ? left
+  : unknown;
+
+type BinaryRight<definition> = OperatorApplyParameters<definition> extends [
+  unknown,
+  infer right,
+  ...unknown[],
+] ? right
+  : unknown;
+
+type BinaryOutput<definition> = OperatorApplyReturn<definition>;
+
+type ConstrainEvaluation<
+  evaluation,
+  expected,
+> = evaluation extends TypeEvaluation<infer value, infer args>
+  ? value extends PositionalPlaceholder
+    ? TypeEvaluation<expected, ConstrainPlaceholderArgs<args, expected>>
+  : evaluation
+  : TypeEvaluation<unknown, readonly unknown[]>;
+
+type ConstrainPlaceholderArgs<
+  args extends readonly unknown[],
+  expected,
+> = args extends readonly [
+  {
+    readonly __itp_placeholder_arg: "indexed";
+    readonly index: infer index extends string;
+  },
+] ? readonly [IndexedPlaceholderArg<index, expected>]
+  : args extends readonly [unknown] ? readonly [expected]
+  : args;
+
+type HasNamedScopeArg<args extends readonly unknown[]> = args extends readonly [
+  infer head,
+  ...infer tail,
+] ? head extends NamedScopePlaceholderArg ? true
+  : HasNamedScopeArg<tail>
+  : false;
+
+type HasIndexedArg<
+  args extends readonly unknown[],
+  index extends string,
+> = args extends readonly [infer head, ...infer tail] ? head extends {
+    readonly __itp_placeholder_arg: "indexed";
+    readonly index: index;
+  } ? true
+  : HasIndexedArg<tail, index>
+  : false;
+
+type IndexedValueFor<
+  args extends readonly unknown[],
+  index extends string,
+  found = never,
+> = args extends readonly [infer head, ...infer tail] ? head extends {
+    readonly __itp_placeholder_arg: "indexed";
+    readonly index: index;
+    readonly value: infer value;
+  } ? IndexedValueFor<
+      tail,
+      index,
+      MergeIndexedValue<found, [value] extends [never] ? unknown : value>
+    >
+  : IndexedValueFor<tail, index, found>
+  : [found] extends [never] ? unknown
+  : found;
+
+type MergeIndexedValue<left, right> = [left] extends [never] ? right
+  : left & right;
+
+type IndexedArgs<args extends readonly unknown[]> = HasIndexedArg<
+  args,
+  "9"
+> extends true ? readonly [
+    IndexedValueFor<args, "0">,
+    IndexedValueFor<args, "1">,
+    IndexedValueFor<args, "2">,
+    IndexedValueFor<args, "3">,
+    IndexedValueFor<args, "4">,
+    IndexedValueFor<args, "5">,
+    IndexedValueFor<args, "6">,
+    IndexedValueFor<args, "7">,
+    IndexedValueFor<args, "8">,
+    IndexedValueFor<args, "9">,
+  ]
+  : HasIndexedArg<args, "8"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+      IndexedValueFor<args, "3">,
+      IndexedValueFor<args, "4">,
+      IndexedValueFor<args, "5">,
+      IndexedValueFor<args, "6">,
+      IndexedValueFor<args, "7">,
+      IndexedValueFor<args, "8">,
+    ]
+  : HasIndexedArg<args, "7"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+      IndexedValueFor<args, "3">,
+      IndexedValueFor<args, "4">,
+      IndexedValueFor<args, "5">,
+      IndexedValueFor<args, "6">,
+      IndexedValueFor<args, "7">,
+    ]
+  : HasIndexedArg<args, "6"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+      IndexedValueFor<args, "3">,
+      IndexedValueFor<args, "4">,
+      IndexedValueFor<args, "5">,
+      IndexedValueFor<args, "6">,
+    ]
+  : HasIndexedArg<args, "5"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+      IndexedValueFor<args, "3">,
+      IndexedValueFor<args, "4">,
+      IndexedValueFor<args, "5">,
+    ]
+  : HasIndexedArg<args, "4"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+      IndexedValueFor<args, "3">,
+      IndexedValueFor<args, "4">,
+    ]
+  : HasIndexedArg<args, "3"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+      IndexedValueFor<args, "3">,
+    ]
+  : HasIndexedArg<args, "2"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+      IndexedValueFor<args, "2">,
+    ]
+  : HasIndexedArg<args, "1"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+      IndexedValueFor<args, "1">,
+    ]
+  : HasIndexedArg<args, "0"> extends true ? readonly [
+      IndexedValueFor<args, "0">,
+    ]
+  : readonly [];
+
+type SequentialArgs<args extends readonly unknown[]> = args extends readonly [
+  infer head,
+  ...infer tail,
+] ? head extends
+    | NamedScopePlaceholderArg
+    | IndexedPlaceholderArg<string, unknown> ? SequentialArgs<tail>
+  : readonly [head, ...SequentialArgs<tail>]
+  : readonly [];
+
+type NormalizePlaceholderArgs<
+  args extends readonly unknown[],
+> = number extends args["length"] ? readonly unknown[]
+  : HasNamedScopeArg<args> extends true ? readonly [
+      Record<string, unknown>,
+      ...IndexedArgs<args>,
+      ...SequentialArgs<args>,
+    ]
+  : readonly [...IndexedArgs<args>, ...SequentialArgs<args>];
+
+type TypeApplyUnary<
+  definition,
+  operand,
+  constrained = ConstrainEvaluation<operand, UnaryInput<definition>>,
+> = TypeEvaluationMatches<constrained, UnaryInput<definition>> extends true
+  ? TypeEvaluation<
+    UnaryOutput<definition>,
+    TypeEvaluationArgs<constrained>
+  >
+  : never;
+
+type TypeApplyBinary<
+  definition,
+  left,
+  right,
+  constrained_left = ConstrainEvaluation<left, BinaryLeft<definition>>,
+  constrained_right = ConstrainEvaluation<right, BinaryRight<definition>>,
+> = TypeEvaluationMatches<constrained_left, BinaryLeft<definition>> extends true
+  ? TypeEvaluationMatches<constrained_right, BinaryRight<definition>> extends
+    true ? TypeEvaluation<
+      BinaryOutput<definition>,
+      readonly [
+        ...TypeEvaluationArgs<constrained_left>,
+        ...TypeEvaluationArgs<constrained_right>,
+      ]
+    >
+  : never
+  : never;
+
+type TypeEvaluationMatches<
+  evaluation,
+  expected,
+> = [evaluation] extends [never] ? false
+  : TypeMatches<TypeEvaluationValue<evaluation>, expected>;
+
+type TypeMatches<value, expected> = unknown extends value ? true
+  : [value] extends [expected] ? true
+  : false;
+
+type TypeEvaluateOperand<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  operand,
+> = ValueStringSyntax<operators, values, operand> extends true
+  ? TypeEvaluateValue<operators, values, operand>
+  : operand extends string ? TypeEvaluateUnary<operators, values, Trim<operand>>
+  : TypeEvaluation<unknown, readonly unknown[]>;
+
+type TypeEvaluateUnary<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 1>,
+> = operator extends keyof operators & string
+  ? Trim<expression> extends `${operator}${infer operand}`
+    ? StringOperandSyntax<operators, values, operand> extends true
+      ? TypeApplyUnary<
+        TypedOperatorDefinition<operators, operator, 1>,
+        TypeEvaluateOperand<operators, values, operand>
+      >
+    : never
+  : never
+  : never;
+
+type TypeEvaluateValue<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  operand,
+> = operand extends string
+  ? Trim<operand> extends "?"
+    ? TypeEvaluation<PositionalPlaceholder, readonly [unknown]>
+  : Trim<operand> extends `?${infer reference}`
+    ? ReferenceSyntax<reference> extends true
+      ? Digits<Trim<reference>> extends true
+        ? Trim<reference> extends Digit ? TypeEvaluation<
+            PositionalPlaceholder,
+            readonly [IndexedPlaceholderArg<Trim<reference>>]
+          >
+        : TypeEvaluation<unknown, readonly unknown[]>
+      : TypeEvaluation<unknown, readonly [NamedScopePlaceholderArg]>
+    : TypeEvaluation<unknown, readonly unknown[]>
+  : Trim<operand> extends `${number}` ? TypeEvaluation<number, readonly []>
+  : Trim<operand> extends "true" | "false"
+    ? TypeEvaluation<boolean, readonly []>
+  : StringLiteral<Trim<operand>> extends true
+    ? TypeEvaluation<string, readonly []>
+  : Trim<operand> extends ValueToken<values>
+    ? TypeEvaluation<values[Trim<operand>], readonly []>
+  : Trim<operand> extends `(${infer token})`
+    ? token extends OperatorToken<operators>
+      ? TypeEvaluation<operators[token], readonly []>
+    : Trim<operand> extends `(${infer expression})`
+      ? TypeEvaluateExpression<operators, values, expression>
+    : TypeEvaluation<unknown, readonly unknown[]>
+  : TypeEvaluation<unknown, readonly unknown[]>
+  : TypeEvaluation<unknown, readonly unknown[]>;
+
+type TypeEvaluateBinary<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 2>,
+> = TypeEvaluateBinaryLeft<operators, values, expression, operator> extends
+  infer left_evaluation
+  ? [left_evaluation] extends [never]
+    ? TypeEvaluateBinaryRight<operators, values, expression, operator>
+  : left_evaluation
+  : never;
+
+type TypeEvaluateBinaryLeft<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 2>,
+> = operator extends keyof operators & string
+  ? TypeEvaluateBinaryLeftForOperator<
+    operators,
+    values,
+    Trim<expression>,
+    operator
+  >
+  : never;
+
+type TypeEvaluateBinaryRight<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+  operator = OperatorTokenWithArity<operators, 2>,
+> = operator extends keyof operators & string
+  ? TypeEvaluateBinaryRightForOperator<
+    operators,
+    values,
+    Trim<expression>,
+    operator
+  >
+  : never;
+
+type TypeEvaluateBinaryRightForOperator<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+  operator extends keyof operators & string,
+  prefix extends string = "",
+> = expression extends `${infer left}${operator}${infer right}`
+  ? OperatorBoundary<
+    operators,
+    operator,
+    `${prefix}${left}`,
+    right
+  > extends true ? TypeEvaluateBinaryTail<
+      operators,
+      values,
+      operator,
+      `${prefix}${left}`,
+      right
+    > extends infer evaluation
+      ? [evaluation] extends [never] ? TypeEvaluateBinaryRightForOperator<
+          operators,
+          values,
+          right,
+          operator,
+          `${prefix}${left}${operator}`
+        >
+      : evaluation
+    : never
+  : TypeEvaluateBinaryRightForOperator<
+    operators,
+    values,
+    right,
+    operator,
+    `${prefix}${left}${operator}`
+  >
+  : never;
+
+type TypeEvaluateBinaryLeftForOperator<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+  operator extends keyof operators & string,
+  prefix extends string = "",
+> = expression extends `${infer left}${operator}${infer right}`
+  ? OperatorBoundary<
+    operators,
+    operator,
+    `${prefix}${left}`,
+    right
+  > extends true ? TypeEvaluateBinaryLeftForOperator<
+      operators,
+      values,
+      right,
+      operator,
+      `${prefix}${left}${operator}`
+    > extends infer later
+      ? [later] extends [never] ? TypeEvaluateBinaryLeftTail<
+          operators,
+          values,
+          operator,
+          `${prefix}${left}`,
+          right
+        >
+      : later
+    : never
+  : TypeEvaluateBinaryLeftForOperator<
+    operators,
+    values,
+    right,
+    operator,
+    `${prefix}${left}${operator}`
+  >
+  : never;
+
+type TypeEvaluateBinaryTail<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  operator extends keyof operators & string,
+  left extends string,
+  right extends string,
+> = ValueExpressionTailSyntax<operators, values, left> extends true
+  ? ValueExpressionTailSyntax<operators, values, right> extends true
+    ? TypeApplyBinary<
+      TypedOperatorDefinition<operators, operator, 2>,
+      TypeEvaluateExpression<operators, values, left>,
+      TypeEvaluateExpression<operators, values, right>
+    >
+  : never
+  : never;
+
+type TypeEvaluateBinaryLeftTail<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  operator extends keyof operators & string,
+  left extends string,
+  right extends string,
+> = ValueExpressionTailSyntax<operators, values, left> extends true
+  ? ValueExpressionTailSyntax<operators, values, right> extends true
+    ? TypeApplyBinary<
+      TypedOperatorDefinition<operators, operator, 2>,
+      TypeEvaluateExpression<operators, values, left>,
+      TypeEvaluateExpression<operators, values, right>
+    >
+  : never
+  : never;
+
+type TypeEvaluateExpression<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+> = StringOperandSyntax<operators, values, expression> extends true
+  ? TypeEvaluateOperand<operators, values, expression>
+  : BinaryStringSyntax<operators, values, expression> extends never
+    ? TypeEvaluation<unknown, readonly unknown[]>
+  : TypeEvaluateBinary<operators, values, expression>;
+
+/** @internal */
+export type StringExpressionType<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+> = NormalizeExpressionType<
+  TypeEvaluationValue<TypeEvaluateExpression<operators, values, expression>>
+>;
+
+type NormalizeExpressionType<value> = value extends PositionalPlaceholder
+  ? unknown
+  : value;
+
+/** @internal */
+export type StringExpressionArgs<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+> = string extends expression ? readonly unknown[]
+  : NormalizePlaceholderArgs<
+    TypeEvaluationArgs<TypeEvaluateExpression<operators, values, expression>>
+  >;
+
+type StringTypeMessageFor<expression extends string> = StringSyntaxMessage<
+  `\`${expression}\` has operands that do not match registered operator types`
+>;
+
 /** @internal */
 type StringCallResult<
   operators extends OperatorRegistry,
@@ -433,11 +1002,31 @@ type StringCallResult<
 > = string extends expression ? unknown
   : StringSyntax<operators, values, expression> extends never
     ? StringSyntaxMessageFor<expression>
-  : rest extends readonly []
-    ? StringExpressionHasReference<operators, values, expression> extends true
-      ? StringRunner<operators, expression>
-    : unknown
-  : unknown;
+  : TypeEvaluateExpression<operators, values, expression> extends
+    infer evaluation ? [evaluation] extends [never] ? StringTypeMessageFor<
+        expression
+      >
+    : rest extends readonly []
+      ? StringExpressionHasReference<operators, values, expression> extends true
+        ? StringRunner<operators, expression, values>
+      : unknown
+    : StringExpressionType<operators, values, expression>
+  : StringTypeMessageFor<expression>;
+
+/** @internal */
+type DirectStringCallResult<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  expression extends string,
+> = string extends expression ? unknown
+  : StringSyntax<operators, values, expression> extends never
+    ? StringSyntaxMessageFor<expression>
+  : TypeEvaluateExpression<operators, values, expression> extends
+    infer evaluation ? [evaluation] extends [never] ? StringTypeMessageFor<
+        expression
+      >
+    : StringExpressionType<operators, values, expression>
+  : StringTypeMessageFor<expression>;
 
 /** @internal */
 type CheckedArgument<argument, result> = result extends
@@ -452,7 +1041,10 @@ type CheckedResult<result> = result extends StringSyntaxMessage<string> ? never
 export type StringRunner<
   _operators extends OperatorRegistry,
   _expression extends string,
-> = (...values: readonly unknown[]) => unknown;
+  _values extends ValueRegistry = EmptyValueRegistry,
+> = (
+  ...values: StringExpressionArgs<_operators, _values, _expression>
+) => StringExpressionType<_operators, _values, _expression>;
 
 /** Runtime-only expression runner returned by {@link Interpreter.raw}. */
 export type RawStringRunner = (...values: unknown[]) => unknown;
@@ -539,16 +1131,21 @@ export type Interpreter<
     strings: TemplateStringsArray,
     ...fragments: readonly ExpressionFragment[]
   ): RawStringResult;
-  <
-    const expression extends string,
-    const rest extends readonly unknown[],
-  >(
+  <const expression extends string>(
     expression: CheckedArgument<
       expression,
-      StringCallResult<operators, values, expression, rest>
+      StringCallResult<operators, values, expression, readonly []>
     >,
-    ...rest: rest
-  ): CheckedResult<StringCallResult<operators, values, expression, rest>>;
+  ): CheckedResult<
+    StringCallResult<operators, values, expression, readonly []>
+  >;
+  <const expression extends string>(
+    expression: CheckedArgument<
+      expression,
+      DirectStringCallResult<operators, values, expression>
+    >,
+    ...rest: StringExpressionArgs<operators, values, expression>
+  ): CheckedResult<DirectStringCallResult<operators, values, expression>>;
 };
 
 /** Create a callable interpreter from an operator registry. */
