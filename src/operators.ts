@@ -15,19 +15,26 @@ export interface OperatorMetadata<
 }
 
 /** Runtime definition for a prefix operator. */
-export interface UnaryOperatorDefinition<kind extends string = string>
-  extends OperatorMetadata<kind, 1> {
+export interface UnaryOperatorDefinition<
+  kind extends string = string,
+  value = unknown,
+  result = unknown,
+> extends OperatorMetadata<kind, 1> {
   /** Apply the operator to its already-evaluated operand. */
-  readonly apply: (value: unknown) => unknown;
+  apply(value: value): result;
 }
 
 /** Runtime definition for an infix operator. */
-export interface BinaryOperatorDefinition<kind extends string = string>
-  extends OperatorMetadata<kind, 2> {
+export interface BinaryOperatorDefinition<
+  kind extends string = string,
+  left = unknown,
+  right = unknown,
+  result = unknown,
+> extends OperatorMetadata<kind, 2> {
   /** Associativity when adjacent operators share precedence. */
   readonly direction: InfixDirection;
   /** Apply the operator to already-evaluated operands. */
-  readonly apply: (left: unknown, right: unknown) => unknown;
+  apply(left: left, right: right): result;
 }
 
 /** Runtime definition for a prefix or infix operator. */
@@ -273,11 +280,15 @@ export function first_operator_token<
 }
 
 /** Create a generic prefix operator. */
-export function unary_operator<const kind extends string>(
+export function unary_operator<
+  const kind extends string,
+  value = unknown,
+  result = unknown,
+>(
   kind: kind,
   precedence: number,
-  fn: (value: unknown) => unknown,
-): UnaryOperatorDefinition<kind> {
+  fn: (value: value) => result,
+): UnaryOperatorDefinition<kind, value, result> {
   return {
     kind,
     precedence,
@@ -291,7 +302,7 @@ export function number_operator(
   precedence: number,
   direction: InfixDirection,
   fn: (left: number, right: number) => number,
-): BinaryOperatorDefinition<"number"> {
+): BinaryOperatorDefinition<"number", number, number, number> {
   return {
     kind: "number",
     precedence,
@@ -307,7 +318,7 @@ export function number_operator(
 export function number_unary_operator(
   precedence: number,
   fn: (value: number) => number,
-): UnaryOperatorDefinition<"number"> {
+): UnaryOperatorDefinition<"number", number, number> {
   return {
     kind: "number",
     precedence,
@@ -321,7 +332,7 @@ export function number_unary_operator(
 /** Create an equality operator. */
 export function equality_operator(
   fn: (left: unknown, right: unknown) => boolean = Object.is,
-): BinaryOperatorDefinition<"equality"> {
+): BinaryOperatorDefinition<"equality", unknown, unknown, boolean> {
   return {
     kind: "equality",
     precedence: 4,
@@ -334,7 +345,7 @@ export function equality_operator(
 /** Create an ordering operator for numeric operands. */
 export function ordering_operator(
   fn: (left: number, right: number) => boolean,
-): BinaryOperatorDefinition<"ordering"> {
+): BinaryOperatorDefinition<"ordering", number, number, boolean> {
   return {
     kind: "ordering",
     precedence: 4,
@@ -351,7 +362,7 @@ export function boolean_operator(
   precedence: number,
   direction: InfixDirection,
   fn: (left: boolean, right: boolean) => boolean,
-): BinaryOperatorDefinition<"boolean"> {
+): BinaryOperatorDefinition<"boolean", boolean, boolean, boolean> {
   return {
     kind: "boolean",
     precedence,
@@ -367,7 +378,7 @@ export function boolean_operator(
 export function boolean_unary_operator(
   precedence: number,
   fn: (value: boolean) => boolean,
-): UnaryOperatorDefinition<"boolean"> {
+): UnaryOperatorDefinition<"boolean", boolean, boolean> {
   return {
     kind: "boolean",
     precedence,
@@ -383,7 +394,7 @@ export function string_operator(
   precedence: number,
   direction: InfixDirection,
   fn: (left: string, right: string) => string,
-): BinaryOperatorDefinition<"string"> {
+): BinaryOperatorDefinition<"string", string, string, string> {
   return {
     kind: "string",
     precedence,
@@ -421,31 +432,46 @@ export type StandardOperatorToken =
 /** Registry type for the built-in operators. */
 export type StandardOperators =
   & Readonly<
-    Record<"+" | "*" | "/" | "%", BinaryOperatorDefinition<"number">>
+    Record<
+      "+" | "*" | "/" | "%",
+      BinaryOperatorDefinition<"number", number, number, number>
+    >
   >
   & Readonly<
     Record<
       "-",
       readonly [
-        BinaryOperatorDefinition<"number">,
-        UnaryOperatorDefinition<"number">,
+        BinaryOperatorDefinition<"number", number, number, number>,
+        UnaryOperatorDefinition<"number", number, number>,
       ]
     >
   >
   & Readonly<
-    Record<StandardEqualityOperatorToken, BinaryOperatorDefinition<"equality">>
+    Record<
+      StandardEqualityOperatorToken,
+      BinaryOperatorDefinition<"equality", unknown, unknown, boolean>
+    >
   >
   & Readonly<
-    Record<StandardOrderingOperatorToken, BinaryOperatorDefinition<"ordering">>
+    Record<
+      StandardOrderingOperatorToken,
+      BinaryOperatorDefinition<"ordering", number, number, boolean>
+    >
   >
   & Readonly<
-    Record<"&&" | "||", BinaryOperatorDefinition<"boolean">>
+    Record<
+      "&&" | "||",
+      BinaryOperatorDefinition<"boolean", boolean, boolean, boolean>
+    >
   >
   & Readonly<
-    Record<"!", UnaryOperatorDefinition<"boolean">>
+    Record<"!", UnaryOperatorDefinition<"boolean", boolean, boolean>>
   >
   & Readonly<
-    Record<StandardStringOperatorToken, BinaryOperatorDefinition<"string">>
+    Record<
+      StandardStringOperatorToken,
+      BinaryOperatorDefinition<"string", string, string, string>
+    >
   >;
 
 /** Standard numeric, string, comparison, equality, and boolean operators. */

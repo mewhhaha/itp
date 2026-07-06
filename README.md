@@ -196,7 +196,7 @@ function checked_binary<const kind extends string, left, right, result>(
   left_guard: Guard<left>,
   right_guard: Guard<right>,
   fn: (left: left, right: right) => result,
-): BinaryOperatorDefinition<kind> {
+): BinaryOperatorDefinition<kind, left, right, result> {
   return {
     kind,
     precedence,
@@ -247,7 +247,7 @@ function checked_unary<const kind extends string, value, result>(
   precedence: number,
   guard: Guard<value>,
   fn: (value: value) => result,
-): UnaryOperatorDefinition<kind> {
+): UnaryOperatorDefinition<kind, value, result> {
   return {
     kind,
     precedence,
@@ -298,6 +298,11 @@ Operator precedence follows the numeric `precedence` field: higher values bind
 more tightly. Binary operators also set `direction` for same-precedence
 associativity: `"left"`, `"right"`, or `"none"`. Unary operators are prefix
 operators.
+
+Operator definitions are generic over their operand and result types, so helper
+builders can preserve signatures such as `(a -> b, a[]) -> b[]`. Expressions and
+placeholders are still runtime data, so custom operators should keep guards when
+they may receive untrusted values.
 
 Operator tokens are stored on the interpreter registry and looked up with
 `get(token)`. Tokens are not copied onto the callable interpreter, so custom

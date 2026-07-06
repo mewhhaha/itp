@@ -82,7 +82,12 @@ console.log(
   }),
 );
 
-function passes_operator(): BinaryOperatorDefinition<"validation"> {
+function passes_operator(): BinaryOperatorDefinition<
+  "validation",
+  unknown,
+  Validator,
+  Validation
+> {
   return {
     kind: "validation",
     precedence: 4,
@@ -93,12 +98,17 @@ function passes_operator(): BinaryOperatorDefinition<"validation"> {
         throw new TypeError("passes expected a validator");
       }
 
-      return (right as Validator)(left);
+      return right(left);
     },
   };
 }
 
-function combine_operator(): BinaryOperatorDefinition<"validation"> {
+function combine_operator(): BinaryOperatorDefinition<
+  "validation",
+  Validation,
+  Validation,
+  Validation
+> {
   return {
     kind: "validation",
     precedence: 3,
@@ -110,7 +120,12 @@ function combine_operator(): BinaryOperatorDefinition<"validation"> {
   };
 }
 
-function either_operator(): BinaryOperatorDefinition<"validation"> {
+function either_operator(): BinaryOperatorDefinition<
+  "validation",
+  Validation,
+  Validation,
+  Validation
+> {
   return {
     kind: "validation",
     precedence: 2,

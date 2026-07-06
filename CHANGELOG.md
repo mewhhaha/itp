@@ -4,6 +4,7 @@ All notable changes to this package will be documented in this file.
 
 ## Unreleased
 
+- Added typed operand and result generics to operator definitions.
 - Added validated expression fragments and `raw` tagged-template composition.
 - Added feature flag, form validation, and applicative parser example DSLs.
 - Hardened named placeholders and operator lookup to ignore inherited prototype

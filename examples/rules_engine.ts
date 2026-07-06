@@ -38,7 +38,12 @@ console.log("rules", {
   review: request_review(order),
 });
 
-function membership_operator(): BinaryOperatorDefinition<"membership"> {
+function membership_operator(): BinaryOperatorDefinition<
+  "membership",
+  unknown,
+  readonly unknown[],
+  boolean
+> {
   return {
     kind: "membership",
     precedence: 4,

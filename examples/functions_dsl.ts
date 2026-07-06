@@ -101,7 +101,7 @@ function checked_binary<const kind extends string, left, right, result>(
   left_guard: Guard<left>,
   right_guard: Guard<right>,
   fn: (left: left, right: right) => result,
-): BinaryOperatorDefinition<kind> {
+): BinaryOperatorDefinition<kind, left, right, result> {
   return {
     kind,
     precedence,
@@ -122,7 +122,7 @@ function checked_unary<const kind extends string, value, result>(
   precedence: number,
   guard: Guard<value>,
   fn: (value: value) => result,
-): UnaryOperatorDefinition<kind> {
+): UnaryOperatorDefinition<kind, value, result> {
   return {
     kind,
     precedence,

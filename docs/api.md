@@ -176,21 +176,36 @@ Unary and binary operator definitions share `kind`, `precedence`, and `arity`.
 Binary definitions also include associativity:
 
 ```ts
-interface UnaryOperatorDefinition<kind extends string = string> {
+interface UnaryOperatorDefinition<
+  kind extends string = string,
+  value = unknown,
+  result = unknown,
+> {
   readonly kind: kind;
   readonly precedence: number;
   readonly arity: 1;
-  readonly apply: (value: unknown) => unknown;
+  apply(value: value): result;
 }
 
-interface BinaryOperatorDefinition<kind extends string = string> {
+interface BinaryOperatorDefinition<
+  kind extends string = string,
+  left = unknown,
+  right = unknown,
+  result = unknown,
+> {
   readonly kind: kind;
   readonly precedence: number;
   readonly arity: 2;
   readonly direction: "left" | "right" | "none";
-  readonly apply: (left: unknown, right: unknown) => unknown;
+  apply(left: left, right: right): result;
 }
 ```
+
+The generic operand and result parameters let reusable operator builders expose
+their domain types. For example, a map-style operator can be typed as
+`BinaryOperatorDefinition<"map", (value: A) => B, readonly A[], readonly B[]>`.
+Keep runtime guards in custom operators when expression strings or placeholders
+can supply values from untyped sources.
 
 Higher precedence values bind more tightly. Binary operators with the same
 precedence must have the same associativity. `"none"` prevents chaining at the

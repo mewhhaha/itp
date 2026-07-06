@@ -889,6 +889,23 @@ const expect_interpreter_type_errors = () => {
   named("one + ?");
   // @ts-expect-error Unknown bare names need to be registered as values.
   named("missing + one");
+  const typed_operators = operators({
+    map: {
+      kind: "array",
+      precedence: 1,
+      direction: "left",
+      arity: 2,
+      apply(fn: (value: number) => string, values: number[]): string[] {
+        return values.map(fn);
+      },
+    },
+  });
+  const mapped = typed_operators.map.apply((value) => String(value), [1, 2]);
+  // @ts-expect-error The mapper input must accept the array element type.
+  typed_operators.map.apply((value: string) => value, [1, 2]);
+  // @ts-expect-error The typed operator returns strings, not numbers.
+  const numbers: number[] = mapped;
+  void numbers;
   void question_runner;
 };
 

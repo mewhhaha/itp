@@ -97,7 +97,12 @@ function evaluate_flag(flag: Flag, user: UserContext): boolean {
   return value;
 }
 
-function membership_operator(): BinaryOperatorDefinition<"membership"> {
+function membership_operator(): BinaryOperatorDefinition<
+  "membership",
+  unknown,
+  readonly unknown[],
+  boolean
+> {
   return {
     kind: "membership",
     precedence: 4,
@@ -113,7 +118,12 @@ function membership_operator(): BinaryOperatorDefinition<"membership"> {
   };
 }
 
-function contains_operator(): BinaryOperatorDefinition<"membership"> {
+function contains_operator(): BinaryOperatorDefinition<
+  "membership",
+  readonly unknown[],
+  unknown,
+  boolean
+> {
   return {
     kind: "membership",
     precedence: 4,
@@ -129,7 +139,12 @@ function contains_operator(): BinaryOperatorDefinition<"membership"> {
   };
 }
 
-function rollout_operator(): BinaryOperatorDefinition<"rollout"> {
+function rollout_operator(): BinaryOperatorDefinition<
+  "rollout",
+  string,
+  number,
+  boolean
+> {
   return {
     kind: "rollout",
     precedence: 4,

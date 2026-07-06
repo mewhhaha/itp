@@ -24,7 +24,7 @@ type Parser<value> = {
   readonly [parser_tag]: true;
 };
 
-type Mapper = (value: unknown) => unknown;
+type Mapper<value = unknown, result = unknown> = (value: value) => result;
 
 const primitives = {
   comma: literal(","),
@@ -75,88 +75,139 @@ function parser_interpreter(values: Record<string, unknown>) {
   }, { values });
 }
 
-function map_operator(): BinaryOperatorDefinition<"parser"> {
+function map_operator<value, result>(): BinaryOperatorDefinition<
+  "parser",
+  Mapper<value, result>,
+  Parser<value>,
+  Parser<result>
+> {
   return {
     kind: "parser",
     precedence: 5,
     direction: "left",
     arity: 2,
-    apply(left, right) {
-      if (typeof left !== "function") {
+    apply(fn, parser) {
+      if (typeof fn !== "function") {
         throw new TypeError("<$> expected a function on the left");
       }
 
-      return map(as_parser(right), left as Mapper);
+      as_parser(parser);
+
+      return map(parser, fn);
     },
   };
 }
 
-function apply_operator(): BinaryOperatorDefinition<"parser"> {
+function apply_operator<value, result>(): BinaryOperatorDefinition<
+  "parser",
+  Parser<(value: value) => result>,
+  Parser<value>,
+  Parser<result>
+> {
   return {
     kind: "parser",
     precedence: 5,
     direction: "left",
     arity: 2,
-    apply(left, right) {
-      return apply_parser(as_parser(left), as_parser(right));
+    apply(fn_parser, value_parser) {
+      as_parser(fn_parser);
+      as_parser(value_parser);
+
+      return apply_parser(fn_parser, value_parser);
     },
   };
 }
 
-function keep_left_operator(): BinaryOperatorDefinition<"parser"> {
+function keep_left_operator<left, right>(): BinaryOperatorDefinition<
+  "parser",
+  Parser<left>,
+  Parser<right>,
+  Parser<left>
+> {
   return {
     kind: "parser",
     precedence: 5,
     direction: "left",
     arity: 2,
-    apply(left, right) {
-      return keep_left(as_parser(left), as_parser(right));
+    apply(left_parser, right_parser) {
+      as_parser(left_parser);
+      as_parser(right_parser);
+
+      return keep_left(left_parser, right_parser);
     },
   };
 }
 
-function keep_right_operator(): BinaryOperatorDefinition<"parser"> {
+function keep_right_operator<left, right>(): BinaryOperatorDefinition<
+  "parser",
+  Parser<left>,
+  Parser<right>,
+  Parser<right>
+> {
   return {
     kind: "parser",
     precedence: 5,
     direction: "left",
     arity: 2,
-    apply(left, right) {
-      return keep_right(as_parser(left), as_parser(right));
+    apply(left_parser, right_parser) {
+      as_parser(left_parser);
+      as_parser(right_parser);
+
+      return keep_right(left_parser, right_parser);
     },
   };
 }
 
-function alternative_operator(): BinaryOperatorDefinition<"parser"> {
+function alternative_operator<value>(): BinaryOperatorDefinition<
+  "parser",
+  Parser<value>,
+  Parser<value>,
+  Parser<value>
+> {
   return {
     kind: "parser",
     precedence: 2,
     direction: "right",
     arity: 2,
-    apply(left, right) {
-      return alternative(as_parser(left), as_parser(right));
+    apply(left_parser, right_parser) {
+      as_parser(left_parser);
+      as_parser(right_parser);
+
+      return alternative(left_parser, right_parser);
     },
   };
 }
 
-function many_operator(): UnaryOperatorDefinition<"parser"> {
+function many_operator<value>(): UnaryOperatorDefinition<
+  "parser",
+  Parser<value>,
+  Parser<readonly value[]>
+> {
   return {
     kind: "parser",
     precedence: 8,
     arity: 1,
-    apply(value) {
-      return many(as_parser(value));
+    apply(parser) {
+      as_parser(parser);
+
+      return many(parser);
     },
   };
 }
 
-function some_operator(): UnaryOperatorDefinition<"parser"> {
+function some_operator<value>(): UnaryOperatorDefinition<
+  "parser",
+  Parser<value>,
+  Parser<readonly value[]>
+> {
   return {
     kind: "parser",
     precedence: 8,
     arity: 1,
-    apply(value) {
-      return some(as_parser(value));
+    apply(parser) {
+      as_parser(parser);
+
+      return some(parser);
     },
   };
 }
@@ -176,10 +227,10 @@ function map<left, right>(
   });
 }
 
-function apply_parser(
-  fn_parser: Parser<unknown>,
-  value_parser: Parser<unknown>,
-): Parser<unknown> {
+function apply_parser<left, right>(
+  fn_parser: Parser<(value: left) => right>,
+  value_parser: Parser<left>,
+): Parser<right> {
   return make_parser(
     "(" + fn_parser.label + " <*> " + value_parser.label + ")",
     (input) => {

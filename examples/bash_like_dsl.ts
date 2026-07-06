@@ -60,7 +60,12 @@ console.log("bash-like", {
   home_name: shell('env "HOME" | basename'),
 });
 
-function pipe_operator(): BinaryOperatorDefinition<"shell"> {
+function pipe_operator(): BinaryOperatorDefinition<
+  "shell",
+  unknown,
+  Command,
+  unknown
+> {
   return {
     kind: "shell",
     precedence: 1,
