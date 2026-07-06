@@ -104,6 +104,9 @@ calc("one + ?value", { value: 41 }); // 42
 calc.get_value("one"); // 1
 ```
 
+Named placeholders read only own properties from the scope object. Inherited
+prototype properties such as `constructor` are treated as missing.
+
 Value names must be valid identifiers, cannot be `true` or `false`, and cannot
 conflict with an operator token.
 
@@ -173,6 +176,10 @@ Register only the infix token itself. For example, registering `+` also allows
 Operator tokens must not be empty or contain whitespace, `(`, `)`, `?`, `"`, or
 `'`. Parentheses are reserved for grouping and operator values, `?` is reserved
 for placeholders, and quotes are reserved for string literals.
+
+Runtime registry validation rejects empty overload sets, malformed definitions,
+unsupported arities, non-finite precedence values, invalid binary directions,
+and non-callable `apply` hooks.
 
 Helper constructors:
 

@@ -9,6 +9,7 @@ import {
   number_operator,
   number_unary_operator,
   operator,
+  type OperatorDefinition,
   operators,
   type RawStringRunner,
   standard_operators,
@@ -84,6 +85,27 @@ Deno.test("interpreter supports named values and functions", () => {
     )
       .summary,
     "value `missing` is not defined",
+  );
+});
+
+Deno.test("interpreter named placeholders read only own scope properties", () => {
+  const scope = Object.create({ inherited: 41 }) as Record<string, unknown>;
+  const null_scope = Object.create(null) as Record<string, unknown>;
+
+  scope.own = 42;
+  null_scope.value = 7;
+
+  assert_equals(terp("?own", scope), 42);
+  assert_equals(terp("?value", null_scope), 7);
+  assert_type_error_message(
+    () => terp("?inherited", scope),
+    "scope is missing `inherited`",
+    "named placeholders should not resolve inherited scope properties",
+  );
+  assert_type_error_message(
+    () => terp("?constructor", {}),
+    "scope is missing `constructor`",
+    "named placeholders should not expose Object prototype properties",
   );
 });
 
@@ -257,6 +279,25 @@ Deno.test("interpreter uses only the operators registered on the instance", () =
   assert_equals(inverted_itp("2 add 3 mul 4"), 20);
 });
 
+Deno.test("interpreter ignores inherited operator registry properties", () => {
+  const registry = Object.create({
+    inherited: number_operator(6, "left", add),
+  }) as Record<string, ReturnType<typeof number_operator>>;
+
+  registry.own = number_operator(6, "left", add);
+
+  const custom_itp = interpreter(registry);
+
+  assert_equals(get_operator_from(registry, "inherited"), undefined);
+  assert_equals(custom_itp.get("inherited"), undefined);
+  assert_equals(custom_itp("20 own 22"), 42);
+  assert_type_error_message(
+    () => custom_itp("20 inherited 22"),
+    "expected a registered operator",
+    "inherited operator properties should not be parsed",
+  );
+});
+
 Deno.test("interpreter keeps operators in the registry instead of callable properties", () => {
   const odd_itp = interpreter(operators({
     custom: number_operator(6, "left", (left, right) => left + right),
@@ -343,6 +384,78 @@ Deno.test("interpreter value registries reject invalid and ambiguous names", () 
       }),
     "must not conflict with an operator token",
     "operator and value names should stay unambiguous",
+  );
+});
+
+Deno.test("operator registries reject invalid runtime definitions", () => {
+  assert_type_error_message(
+    () => operators({ bad: null as unknown as OperatorDefinition }),
+    "definition must be an object",
+    "operator definitions should be objects",
+  );
+  assert_type_error_message(
+    () => operators({ bad: [] as unknown as OperatorDefinition }),
+    "at least one definition",
+    "empty overload sets should be rejected",
+  );
+  assert_type_error_message(
+    () =>
+      operators({
+        bad: {
+          kind: "bad",
+          precedence: Number.NaN,
+          arity: 1,
+          apply(value: unknown) {
+            return value;
+          },
+        },
+      }),
+    "finite precedence",
+    "operator precedence should be finite",
+  );
+  assert_type_error_message(
+    () =>
+      operators({
+        bad: {
+          kind: "bad",
+          precedence: 1,
+          arity: 3,
+          apply(value: unknown) {
+            return value;
+          },
+        } as unknown as OperatorDefinition,
+      }),
+    "arity must be 1 or 2",
+    "operator arity should be constrained to supported values",
+  );
+  assert_type_error_message(
+    () =>
+      operators({
+        bad: {
+          kind: "bad",
+          precedence: 1,
+          direction: "sideways",
+          arity: 2,
+          apply(left: unknown, right: unknown) {
+            return [left, right];
+          },
+        } as unknown as OperatorDefinition,
+      }),
+    "direction must be left, right, or none",
+    "binary operator direction should be validated",
+  );
+  assert_type_error_message(
+    () =>
+      operators({
+        bad: {
+          kind: "bad",
+          precedence: 1,
+          arity: 1,
+          apply: "nope",
+        } as unknown as OperatorDefinition,
+      }),
+    "apply must be a function",
+    "operator apply hooks should be callable",
   );
 });
 
@@ -481,6 +594,13 @@ Deno.test("interpreter supports grouped expressions", () => {
   assert_equals(terp("((+))"), terp.get("+"));
   assert_equals(terp("('a' ++ ('b' ++ 'c'))"), "abc");
   assert_equals(terp("!(false || (true && false))"), true);
+});
+
+Deno.test("interpreter ignores parentheses inside string literals when grouping", () => {
+  assert_equals(terp('(")")'), ")");
+  assert_equals(terp('("(" ++ ")")'), "()");
+  assert_equals(terp('("a ( b ) c")'), "a ( b ) c");
+  assert_equals(assert_raw_runner(terp.raw('(")")'))(), ")");
 });
 
 Deno.test("interpreter number syntax matches TypeScript number strings", () => {

@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## Unreleased
+
+- Hardened named placeholders and operator lookup to ignore inherited prototype
+  properties.
+- Hardened runtime operator registry validation for malformed definitions and
+  empty overload sets.
+- Fixed grouped expression parsing when string literals contain parentheses.
+
 ## 0.1.0 - 2026-07-05
 
 - Initial release of the typed expression interpreter.

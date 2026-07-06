@@ -131,7 +131,15 @@ function validate_operator_entry(token: string, entry: OperatorEntry): void {
   const definitions = operator_definitions(entry);
   const arities = new Set<number>();
 
+  if (definitions.length === 0) {
+    throw new TypeError(
+      "operator `" + token + "` must have at least one definition",
+    );
+  }
+
   for (const definition of definitions) {
+    validate_operator_definition(token, definition);
+
     if (arities.has(definition.arity)) {
       throw new TypeError(
         "operator `" + token + "` has more than one arity `" +
@@ -140,6 +148,56 @@ function validate_operator_entry(token: string, entry: OperatorEntry): void {
     }
 
     arities.add(definition.arity);
+  }
+}
+
+function validate_operator_definition(
+  token: string,
+  definition: OperatorDefinition,
+): void {
+  if (typeof definition !== "object" || definition === null) {
+    throw new TypeError(
+      "operator `" + token + "` definition must be an object",
+    );
+  }
+
+  if (typeof definition.kind !== "string") {
+    throw new TypeError(
+      "operator `" + token + "` definition kind must be a string",
+    );
+  }
+
+  if (
+    typeof definition.precedence !== "number" ||
+    !Number.isFinite(definition.precedence)
+  ) {
+    throw new TypeError(
+      "operator `" + token + "` definition must have a finite precedence",
+    );
+  }
+
+  if (definition.arity !== 1 && definition.arity !== 2) {
+    throw new TypeError(
+      "operator `" + token + "` definition arity must be 1 or 2",
+    );
+  }
+
+  if (typeof definition.apply !== "function") {
+    throw new TypeError(
+      "operator `" + token + "` definition apply must be a function",
+    );
+  }
+
+  if (
+    definition.arity === 2 &&
+    definition.direction !== "left" &&
+    definition.direction !== "right" &&
+    definition.direction !== "none"
+  ) {
+    throw new TypeError(
+      "operator `" + token +
+        "` binary definition direction must be left, right, or none",
+    );
   }
 }
 
@@ -164,6 +222,10 @@ export function get_operator_from(
   operators: OperatorRegistry,
   token: string,
 ): OperatorEntry | undefined {
+  if (!Object.hasOwn(operators, token)) {
+    return undefined;
+  }
+
   return operators[token];
 }
 

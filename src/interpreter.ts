@@ -1697,7 +1697,14 @@ function find_closing_parenthesis(
   let depth = 0;
 
   for (let index = open; index < text.length; index += 1) {
-    switch (text[index]) {
+    const character = text[index];
+
+    if (character === '"' || character === "'") {
+      index = skip_string_literal(text, index) - 1;
+      continue;
+    }
+
+    switch (character) {
       case "(":
         depth += 1;
         break;
@@ -1715,12 +1722,38 @@ function find_closing_parenthesis(
   return undefined;
 }
 
+function skip_string_literal(text: string, index: number): number {
+  const quote = text[index];
+  let next = index + 1;
+
+  while (next < text.length) {
+    if (text[next] === quote) {
+      return next + 1;
+    }
+
+    if (text[next] === "\\") {
+      if (text[next + 1] === undefined) {
+        throw new TypeError(
+          "interpreter string literal has an incomplete escape",
+        );
+      }
+
+      next += 2;
+      continue;
+    }
+
+    next += 1;
+  }
+
+  throw new TypeError("interpreter string literal is missing closing quote");
+}
+
 function named_scope_value(scope: unknown, name: string): unknown {
   if (typeof scope !== "object" || scope === null) {
     throw new TypeError("interpreter expression expected a scope object");
   }
 
-  if (!(name in scope)) {
+  if (!Object.hasOwn(scope, name)) {
     throw new TypeError(
       "interpreter expression scope is missing `" + name + "`",
     );

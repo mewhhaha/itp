@@ -75,6 +75,9 @@ Named placeholders read from the first value:
 terp("?left + ?right * ?", { left: 2, right: 3 }, 4); // 14
 ```
 
+Named placeholders only read own properties from the scope object. Prototype
+properties such as `constructor` are treated as missing.
+
 Indexed placeholders read positional values by zero-based index and can reuse
 the same value:
 
@@ -280,6 +283,10 @@ tokens can safely use names such as `length`, `name`, and `get`.
 Operator tokens must not be empty or contain whitespace, `(`, `)`, `?`, `"`, or
 `'`. Parentheses are reserved for grouping and operator values, `?` is reserved
 for placeholders, and quotes are reserved for string literals.
+
+Runtime registry validation also rejects malformed operator definitions, empty
+overload sets, unsupported arities, non-finite precedence values, invalid binary
+directions, and non-callable `apply` hooks.
 
 ## API
 
