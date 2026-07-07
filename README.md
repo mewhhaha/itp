@@ -145,6 +145,26 @@ words("neg ?", 42); // -42
 words("~?0 ~ ?1", 20, 62); // 42
 ```
 
+For custom operators where the callback carries the useful types, `op` provides
+a terse fixity DSL and materializes the same operator definition objects:
+
+```ts
+import { interpreter, op } from "jsr:@mewhhaha/terp";
+
+const words = interpreter({
+  add: op("'math' | infixl 6 ?", (left: number, right: number) => left + right),
+  mul: op("'math' | infixl 7 ?", (left: number, right: number) => left * right),
+  neg: op("'math' | prefix 8 ?", (value: number) => -value),
+});
+
+words("2 add 3 mul 4"); // 14
+words("neg 42"); // -42
+```
+
+The `?` in an `op` declaration stands for the registry key being defined.
+`'math' | ...` sets the operator `kind`. Use `infixl`, `infixr`, `infix` for
+non-associative operators, or `prefix`.
+
 Add named values when an interpreter should expose constants or functions as
 part of the DSL vocabulary:
 
@@ -422,6 +442,8 @@ directions, and non-callable `apply` hooks.
 - `interpreter(...).raw(expression)` creates a runtime expression runner or
   returns an `InterpreterError` with `summary` and `errors` when the expression
   is invalid.
+- `op(declaration, fn, options?)` creates an operator definition from a terse
+  fixity declaration such as `"infixl 6 ?"` or `"prefix 8 ?"`.
 - `operators(registry)` validates and preserves a reusable registry when you
   want to define it separately from `interpreter(...)`.
 - `operator(definition, ...overloads)` preserves a single operator definition or

@@ -239,6 +239,7 @@ and non-callable `apply` hooks.
 Helper constructors:
 
 - `operator(definition, ...overloads)`
+- `op(declaration, fn, options?)`
 - `unary_operator(kind, precedence, fn)`
 - `number_operator(precedence, direction, fn)`
 - `number_unary_operator(precedence, fn)`
@@ -247,6 +248,38 @@ Helper constructors:
 - `ordering_operator(fn)`
 - `boolean_operator(precedence, direction, fn)`
 - `boolean_unary_operator(precedence, fn)`
+
+`op` is a small terp-powered DSL for defining ordinary operator definitions. It
+accepts `prefix`, `infixl`, `infixr`, or `infix` declarations followed by a
+precedence and `?`. The `?` marks the registry key being defined. Put a string
+literal on the left of `|` to set `kind` in the same declaration:
+
+```ts
+const calc = interpreter({
+  add: op("'math' | infixl 6 ?", (left: number, right: number) => left + right),
+  mul: op("'math' | infixl 7 ?", (left: number, right: number) => left * right),
+  neg: op("'math' | prefix 8 ?", (value: number) => -value),
+});
+
+calc("2 add 3 mul 4"); // 14
+calc("neg 42"); // -42
+```
+
+Definitions created without an inline kind default to `kind: "operator"`. You
+can also pass a literal `kind` option or create a kind-bound helper when lookup
+narrowing matters:
+
+```ts
+const shell_op = op.kind("shell");
+
+const shell = interpreter({
+  echo: shell_op("prefix 8 ?", String),
+  "|": op("'shell' | infixl 1 ?", (
+    value,
+    fn: (value: unknown) => unknown,
+  ) => fn(value)),
+});
+```
 
 ## Registry Helpers
 
