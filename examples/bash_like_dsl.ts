@@ -23,6 +23,7 @@ const shell = interpreter({
 
     return value;
   }),
+  grep: unary_operator("shell", 8, (needle) => grep(as_string(needle))),
   "|": pipe_operator(),
 }, {
   values: {
@@ -30,7 +31,6 @@ const shell = interpreter({
     count,
     first: head(1),
     greeting: "  hello from terp  ",
-    grep_error: grep("error"),
     join_comma: join(", "),
     lines,
     trim,
@@ -45,8 +45,13 @@ const log = [
   "info ready",
   "error cache",
 ].join("\n");
+const greetings = [
+  "hello from terp",
+  "goodbye for now",
+  "well hello again",
+].join("\n");
 
-const user_pipeline = shell.raw("? | lines | grep_error | count");
+const user_pipeline = shell.raw('? | lines | grep "error" | count');
 
 if (user_pipeline instanceof Error) {
   console.error(user_pipeline.summary);
@@ -55,7 +60,8 @@ if (user_pipeline instanceof Error) {
 
 console.log("bash-like", {
   greeting: shell("echo greeting | trim | upper"),
-  first_error: shell("? | lines | grep_error | first | join_comma", log),
+  hello_lines: shell('echo ? | grep "hello" | join_comma', greetings),
+  first_error: shell('? | lines | grep "error" | first | join_comma', log),
   error_count: user_pipeline(log),
   home_name: shell('env "HOME" | basename'),
 });

@@ -175,6 +175,83 @@ pipeline("greeting | trim | upper"); // "HELLO"
 pipeline("? | trim | upper", " hi "); // "HI"
 ```
 
+A more useful DSL can look like a tiny shell: prefix commands build pipeline
+steps, and `|` feeds each result into the next command. The complete version is
+in [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts).
+
+```ts
+import {
+  type BinaryOperatorDefinition,
+  interpreter,
+  unary_operator,
+} from "jsr:@mewhhaha/terp";
+
+type Command = (input: unknown) => unknown;
+
+const shell = interpreter({
+  echo: unary_operator("shell", 8, String),
+  grep: unary_operator("shell", 8, (needle) => {
+    return (input: unknown) =>
+      as_lines(input).filter((line) => line.includes(String(needle)));
+  }),
+  "|": pipe_operator(),
+}, {
+  values: {
+    count: (input: unknown) => as_lines(input).length,
+    join_comma: (input: unknown) => as_lines(input).join(", "),
+    lines: as_lines,
+  },
+});
+
+const log = [
+  "info boot",
+  "error database",
+  "info ready",
+  "error cache",
+].join("\n");
+
+const count_errors = shell.raw('? | lines | grep "error" | count');
+
+if (count_errors instanceof Error) {
+  throw count_errors;
+}
+
+count_errors(log); // 2
+shell('echo ? | grep "hello" | join_comma', "hello\nbye\nhello again");
+// "hello, hello again"
+
+function pipe_operator(): BinaryOperatorDefinition<
+  "shell",
+  unknown,
+  Command,
+  unknown
+> {
+  return {
+    kind: "shell",
+    precedence: 1,
+    direction: "left",
+    arity: 2,
+    apply(input, command) {
+      if (typeof command !== "function") {
+        throw new TypeError("expected a command function");
+      }
+
+      return command(input);
+    },
+  };
+}
+
+function as_lines(input: unknown): readonly string[] {
+  if (Array.isArray(input)) {
+    return input.map(String);
+  }
+
+  return String(input).split(/\r?\n/).filter((line) => {
+    return line.length > 0;
+  });
+}
+```
+
 Operators can run arbitrary JavaScript or TypeScript functions. The parser only
 decides where the operands are; the operator body is normal code:
 

@@ -20,8 +20,8 @@ operator helpers that validate custom domain values with type guards.
 ## `bash_like_dsl.ts`
 
 Builds a tiny shell-style pipeline DSL with `|`, prefix commands such as
-`echo`/`env`, pipeline utilities registered as named values, and `raw(...)` for
-a user-authored pipeline shape.
+`echo`/`env`/`grep "needle"`, pipeline utilities registered as named values, and
+`raw(...)` for a user-authored pipeline shape.
 
 ## `rules_engine.ts`
 
