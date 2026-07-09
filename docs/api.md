@@ -111,6 +111,25 @@ prototype properties such as `constructor` are treated as missing.
 Value names must be valid identifiers, cannot be `true` or `false`, and cannot
 conflict with an operator token.
 
+Callable named values can receive following space-separated words as arguments.
+Unquoted identifier-shaped words are strings, while literals, placeholders, and
+named values keep their runtime values. Configure `word_prefixes` when words may
+start with additional prefixes; no prefixes are enabled by default.
+
+```ts
+const words = interpreter({}, {
+  word_prefixes: ["-", "--"] as const,
+  values: {
+    collect(...words: string[]): string[] {
+      return words;
+    },
+  },
+});
+
+words("collect alpha -v --version"); // ["alpha", "-v", "--version"]
+words("collect -v ?", "input"); // ["-v", "input"]
+```
+
 `raw` is for expressions that are only known at runtime, such as user-authored
 DSL strings. It returns either an `InterpreterError` or a function with
 `(...args: unknown[]) => unknown` instead of using literal-type syntax checks:

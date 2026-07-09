@@ -195,6 +195,33 @@ pipeline("greeting | trim | upper"); // "HELLO"
 pipeline("? | trim | upper", " hi "); // "HI"
 ```
 
+Functions placed in `values` can also receive space-separated word arguments.
+This works naturally with rest parameters such as `(...words: string[])`. No
+word prefixes are enabled by default; opt in with `word_prefixes` when words may
+start with markers such as `-` or `--`.
+
+```ts
+import { interpreter } from "jsr:@mewhhaha/terp";
+
+const tools = interpreter({}, {
+  word_prefixes: ["-", "--"] as const,
+  values: {
+    collect(...words: string[]): string[] {
+      return words;
+    },
+    greet: (name: string, title?: string) =>
+      `hello ${title ? title + " " : ""}${name}`,
+  },
+});
+
+tools("collect alpha -v --version"); // ["alpha", "-v", "--version"]
+tools("collect -v ?", "input"); // ["-v", "input"]
+tools("greet Alice"); // "hello Alice"
+tools('greet "Alice" "Dr"'); // "hello Dr Alice"
+```
+
+Bare names with no following words still return the value itself.
+
 A more useful DSL can look like a tiny shell: prefix commands build pipeline
 steps, and `|` feeds each result into the next command. The complete version is
 in [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts).
