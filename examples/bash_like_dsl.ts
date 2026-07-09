@@ -66,6 +66,27 @@ console.log("bash-like", {
   home_name: shell('env "HOME" | basename'),
 });
 
+// New: direct shell-like command syntax with --flags is supported by putting
+// command factories in `values`. The factory receives a CommandInvocation record.
+const cliGrep = (inv: import("../mod.ts").CommandInvocation) => {
+  const needle = String(inv.positionals[0] ?? "");
+  const ignoreCase = !!inv.flags.i || !!inv.flags["ignore-case"] || !!inv.flags.ignoreCase;
+  return (input: unknown) =>
+    as_lines(input).filter((line) =>
+      ignoreCase ? line.toLowerCase().includes(needle.toLowerCase()) : line.includes(needle),
+    );
+};
+
+const shell2 = interpreter({ "|": pipe_operator() }, {
+  values: {
+    ...shell.values,
+    grepcase: cliGrep,
+  },
+});
+console.log("shell-direct", {
+  withFlag: shell2('? | grepcase -i "hello" | join_comma', greetings),
+});
+
 function pipe_operator(): BinaryOperatorDefinition<
   "shell",
   unknown,

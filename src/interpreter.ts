@@ -479,6 +479,29 @@ type PositionalPlaceholder = {
   readonly __itp_placeholder: "positional";
 };
 
+/** Brand for flag values parsed from `--name` or `-x` (and `--name=val`) in command invocations. */
+const flagBrand: unique symbol = Symbol("terp.flag");
+
+export type Flag = {
+  readonly [flagBrand]: true;
+  /** The flag name without leading dashes, e.g. "hello" for `--hello`, "v" for `-v`. */
+  readonly name: string;
+  /** Attached value for `--name=value` form; undefined for bare flags. */
+  readonly value?: unknown;
+};
+
+export function isFlag(value: unknown): value is Flag {
+  return typeof value === "object" && value !== null && flagBrand in value;
+}
+
+export function getFlagName(flag: Flag): string {
+  return flag.name;
+}
+
+export function getFlagValue(flag: Flag): unknown {
+  return flag.value;
+}
+
 type NamedScopePlaceholderArg = {
   readonly __itp_placeholder_arg: "scope";
 };
@@ -799,6 +822,8 @@ type TypeEvaluateValue<
     ? TypeEvaluation<boolean, readonly []>
   : StringLiteral<Trim<operand>> extends true
     ? TypeEvaluation<string, readonly []>
+  : Trim<operand> extends `--${string}` | `-${string}`
+    ? TypeEvaluation<Flag, readonly []>
   : Trim<operand> extends ValueToken<values>
     ? TypeEvaluation<values[Trim<operand>], readonly []>
   : Trim<operand> extends `(${infer token})`
@@ -807,6 +832,14 @@ type TypeEvaluateValue<
     : Trim<operand> extends `(${infer expression})`
       ? TypeEvaluateExpression<operators, values, expression>
     : TypeEvaluation<unknown, readonly unknown[]>
+  : Trim<operand> extends `${infer cmd} ${infer rest}`
+    ? Identifier<Trim<cmd>> extends true
+      ? Trim<cmd> extends ValueToken<values>
+        ? TypeEvaluateExpression<operators, values, rest> extends infer restE
+          ? TypeEvaluation<values[Trim<cmd>], TypeEvaluationArgs<restE>>
+          : TypeEvaluation<unknown, readonly unknown[]>
+        : TypeEvaluation<unknown, readonly unknown[]>
+      : TypeEvaluation<unknown, readonly unknown[]>
   : TypeEvaluation<unknown, readonly unknown[]>
   : TypeEvaluation<unknown, readonly unknown[]>;
 
@@ -1625,10 +1658,22 @@ function read_value(
     return read_reference(text, index, context);
   }
 
+  const flag = read_flag(text, index, context);
+  if (flag !== undefined) {
+    return flag;
+  }
+
   const literal = read_literal(text, index);
 
   if (literal !== undefined) {
     return literal;
+  }
+
+  // Command invocation support for shell-like syntax: CMD [ --flag | -x | WORD ]...
+  // Triggers only for identifiers that name a *function* in the registry. The fn receives a CommandInvocation record.
+  const command = read_command_invocation(operators, text, index, context, options);
+  if (command !== undefined) {
+    return command;
   }
 
   const named_value = read_named_value(context.named_values, text, index);
@@ -1661,6 +1706,124 @@ function read_named_value(
   }
 
   return { value: values[name.name], next: name.next };
+}
+
+/**
+ * Support direct shell-like command syntax inside expressions.
+ * A command is an identifier (present as fn in values) followed by zero or more words.
+ * Words can be flags or bare words/literals/placeholders/parenthesized.
+ * The registered function value is invoked with a CommandInvocation record containing flags + positionals.
+ */
+function read_command_invocation(
+  operators: OperatorRegistry,
+  text: string,
+  index: number,
+  context: TokenizeContext,
+  options: InterpreterOptions,
+): { readonly value: unknown; readonly next: number } | undefined {
+  const ident = read_identifier(text, index);
+  if (ident === undefined) {
+    return undefined;
+  }
+
+  const candidate = context.named_values[ident.name];
+  if (typeof candidate !== "function") {
+    return undefined;
+  }
+
+  // Collect words after the command name. Stop at binary operators so `cmd --f | next` works.
+  const words: unknown[] = [];
+  let next = ident.next;
+
+  while (next < text.length) {
+    next = skip_whitespace(text, next);
+    if (next >= text.length) break;
+
+    if (read_operator(operators, text, next, 2, true) !== undefined) {
+      break;
+    }
+
+    const fl = read_flag(text, next, context);
+    if (fl !== undefined) {
+      words.push(fl.value);
+      next = fl.next;
+      continue;
+    }
+
+    const atom = read_atomic_word_value(text, next, context, options, operators);
+    if (atom !== undefined) {
+      words.push(atom.value);
+      next = atom.next;
+      continue;
+    }
+
+    break;
+  }
+
+  if (words.length === 0) {
+    // bare name, let normal named_value return the fn itself (for use in pipelines etc.)
+    return undefined;
+  }
+
+  if (!context.resolve_references) {
+    return { value: raw_validation_value, next };
+  }
+
+  const invocation = createCommandInvocation(ident.name, words);
+  const result = candidate(invocation);
+  return { value: result, next };
+}
+
+function read_atomic_word_value(
+  text: string,
+  index: number,
+  context: TokenizeContext,
+  options: InterpreterOptions,
+  operators: OperatorRegistry,
+): { readonly value: unknown; readonly next: number } | undefined {
+  if (text[index] === "?") {
+    return read_reference(text, index, context);
+  }
+
+  const lit = read_literal(text, index);
+  if (lit !== undefined) return lit;
+
+  const named = read_named_value(context.named_values, text, index);
+  if (named !== undefined) return named;
+
+  // Unquoted shell word / arg (identifiers not registered are still valid words)
+  const bare = read_identifier(text, index);
+  if (bare !== undefined) {
+    return { value: bare.name, next: bare.next };
+  }
+
+  return read_parenthesized_operator_value(operators, text, index) ??
+    read_parenthesized_expression(operators, text, index, context, options);
+}
+
+export type CommandInvocation = {
+  readonly name: string;
+  readonly args: readonly unknown[];
+  readonly flags: Readonly<Record<string, unknown>>;
+  readonly positionals: readonly unknown[];
+};
+
+function createCommandInvocation(name: string, words: readonly unknown[]): CommandInvocation {
+  const flags: Record<string, unknown> = Object.create(null);
+  const positionals: unknown[] = [];
+  const args: unknown[] = [];
+
+  for (const w of words) {
+    args.push(w);
+    if (isFlag(w)) {
+      const f = w as Flag;
+      flags[f.name] = f.value !== undefined ? f.value : true;
+    } else {
+      positionals.push(w);
+    }
+  }
+
+  return { name, args, flags, positionals };
 }
 
 function read_parenthesized_operator_value(
@@ -1913,6 +2076,58 @@ function read_identifier(
 
 function is_identifier_part(character: string | undefined): boolean {
   return character !== undefined && /^[A-Za-z0-9_$]$/.test(character);
+}
+
+function read_flag(
+  text: string,
+  index: number,
+  context?: TokenizeContext,
+): { readonly value: Flag; readonly next: number } | undefined {
+  // Match - or -- followed by a name start (not digit, to not steal -3 etc)
+  const m = /^(-{1,2})([A-Za-z_][A-Za-z0-9_-]*)/.exec(text.slice(index));
+  if (m === null) {
+    return undefined;
+  }
+
+  const dashes = m[1];
+  const name = m[2];
+  let next = index + dashes.length + name.length;
+
+  let attached: unknown | undefined;
+
+  if (text[next] === "=") {
+    next += 1;
+    const afterEq = read_flag_attached_value(text, next, context);
+    if (afterEq !== undefined) {
+      attached = afterEq.value;
+      next = afterEq.next;
+    } else {
+      attached = "";
+    }
+  }
+
+  const flagValue: Flag = {
+    [flagBrand]: true,
+    name,
+    ...(attached !== undefined ? { value: attached } : {}),
+  };
+
+  return { value: flagValue, next };
+}
+
+function read_flag_attached_value(
+  text: string,
+  index: number,
+  context?: TokenizeContext,
+): { readonly value: unknown; readonly next: number } | undefined {
+  const lit = read_literal(text, index);
+  if (lit !== undefined) return lit;
+
+  if (text[index] === "?" && context) {
+    return read_reference(text, index, context);
+  }
+
+  return undefined;
 }
 
 function read_operator(
@@ -2279,6 +2494,13 @@ function has_reference(
         continue;
       }
 
+      const fl = read_flag(expression, index);
+      if (fl !== undefined) {
+        index = fl.next;
+        expecting_value = false;
+        continue;
+      }
+
       if (expression[index] === "?") {
         return true;
       }
@@ -2296,6 +2518,39 @@ function has_reference(
       if (named_value !== undefined) {
         index = named_value.next;
         expecting_value = false;
+        // After a registered name, skip any following command words (flags/args) so that
+        // shell syntax does not cause "expected operator" in has_ checks, and ? inside are found.
+        while (index < expression.length) {
+          const save = index;
+          index = skip_whitespace(expression, index);
+          if (index >= expression.length) { index=save; break; }
+          if (read_operator(operators, expression, index, 2, true) !== undefined) { index=save; break; }
+
+          const f = read_flag(expression, index);
+          if (f !== undefined) {
+            index = f.next;
+            continue;
+          }
+          if (expression[index] === "?") {
+            return true;
+          }
+          const lit = read_literal(expression, index);
+          if (lit !== undefined) { index = lit.next; continue; }
+          const nv = read_named_value(named_values, expression, index);
+          if (nv !== undefined) { index = nv.next; continue; }
+          const bare = read_identifier(expression, index);
+          if (bare !== undefined) { index = bare.next; continue; }
+          if (expression[index] === "(") {
+            const cl = find_closing_parenthesis(expression, index);
+            if (cl !== undefined) {
+              if (has_reference(operators, named_values, expression.slice(index+1, cl))) return true;
+              index = cl + 1;
+              continue;
+            }
+          }
+          index = save;
+          break;
+        }
         continue;
       }
 
@@ -2396,6 +2651,36 @@ function has_named_reference(
       if (named_value !== undefined) {
         index = named_value.next;
         expecting_value = false;
+        // skip command words after registered name, detecting named refs
+        while (index < expression.length) {
+          const save = index;
+          index = skip_whitespace(expression, index);
+          if (index >= expression.length) { index = save; break; }
+          if (read_operator(operators, expression, index, 2, true) !== undefined) { index=save; break; }
+
+          const f = read_flag(expression, index);
+          if (f !== undefined) { index = f.next; continue; }
+          if (expression[index] === "?") {
+            if (read_identifier(expression, index + 1) !== undefined) return true;
+            const ix = read_indexed_reference(expression, index + 1);
+            index = ix?.next ?? index + 1;
+            continue;
+          }
+          const lit = read_literal(expression, index);
+          if (lit !== undefined) { index = lit.next; continue; }
+          const nv = read_named_value(named_values, expression, index);
+          if (nv !== undefined) { index = nv.next; continue; }
+          const bare = read_identifier(expression, index);
+          if (bare !== undefined) { index = bare.next; continue; }
+          if (expression[index] === "(") {
+            const cl = find_closing_parenthesis(expression, index);
+            if (cl !== undefined) {
+              if (has_named_reference(operators, named_values, expression.slice(index+1, cl))) return true;
+              index = cl + 1; continue;
+            }
+          }
+          index = save; break;
+        }
         continue;
       }
 
