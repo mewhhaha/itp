@@ -195,9 +195,57 @@ pipeline("greeting | trim | upper"); // "HELLO"
 pipeline("? | trim | upper", " hi "); // "HI"
 ```
 
-A more useful DSL can look like a tiny shell: prefix commands build pipeline
-steps, and `|` feeds each result into the next command. The complete version is
-in [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts).
+Functions placed in `values` can be invoked directly with space-separated
+arguments and/or flags:
+
+```ts
+import { interpreter, type CommandInvocation } from "jsr:@mewhhaha/terp";
+
+const tools = interpreter({}, {
+  values: {
+    // CLI-style command that receives a record when flags are used
+    grep: (inv: CommandInvocation) => {
+      const pattern = String(inv.positionals[0] ?? "");
+      const ignore_case = !!inv.flags.i || !!inv.flags["ignore-case"];
+      return (input: unknown) => /* filter using pattern and flags */;
+    },
+    // Normal function – called directly with positional arguments
+    greet: (name, title) => `hello ${title ? title + " " : ""}${name}`,
+  },
+});
+
+tools("greet Alice");                    // calls greet("Alice")
+tools("greet Alice Dr");                 // calls greet("Alice", "Dr")
+tools('grep -i "hello" ?text', "...");   // calls grep with CommandInvocation
+```
+
+- If the invocation contains any flags (`--foo`, `-x`, etc.), the function
+  receives a `CommandInvocation` record:
+
+  ```ts
+  {
+    name: string;
+    args: readonly unknown[];
+    flags: Record<string, unknown>;
+    positionals: readonly unknown[];
+  }
+  ```
+
+- Otherwise it is called directly with the positional values (space-separated
+  arguments work naturally, and placeholders are supported).
+
+Use `is_flag`, `get_flag_name`, and `get_flag_value` to inspect raw `Flag`
+objects that appear in `args`. Bare function names with no arguments still
+return the function itself (for pipelines etc.).
+
+See the updated [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts) for a
+larger example that mixes this style with pipelines.
+```
+
+A more useful DSL can look like a tiny shell. Commands can be registered as
+prefix operators (for the classic `cmd arg | next` style) or placed directly in
+`values` to support shell-like flag syntax such as `grep -i --context=2 "foo"`.
+See [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts) for both approaches.
 
 ```ts
 import {
@@ -452,14 +500,18 @@ directions, and non-callable `apply` hooks.
   `equality_operator`, `ordering_operator`, `boolean_operator`, and
   `boolean_unary_operator` create common operator definitions.
 - `standard_operators` exposes the default operator registry.
+- `Flag` and `CommandInvocation` types plus `is_flag`, `get_flag_name`, and
+  `get_flag_value` support the direct command/flag syntax for functions in
+  `values`.
 
 See [docs/api.md](docs/api.md) for more detail.
 
 ## Examples
 
 The [examples](examples) folder contains small DSLs for pricing, shell-like
-pipelines, approval rules, JSON-driven metric calculations, feature flags, form
-validation, and applicative parser combinators. Run them all with:
+pipelines (including direct command + flag syntax), approval rules, JSON-driven
+metric calculations, feature flags, form validation, and applicative parser
+combinators. Run them all with:
 
 ```sh
 deno task examples

@@ -66,25 +66,26 @@ console.log("bash-like", {
   home_name: shell('env "HOME" | basename'),
 });
 
-// New: direct shell-like command syntax with --flags is supported by putting
-// command factories in `values`. The factory receives a CommandInvocation record.
-const cliGrep = (inv: import("../mod.ts").CommandInvocation) => {
+// New: functions in `values` support direct space-separated calls and
+// shell-style flags. With flags present they receive a CommandInvocation
+// record; without flags they are called directly with the arguments.
+const cli_grep = (inv: import("../mod.ts").CommandInvocation) => {
   const needle = String(inv.positionals[0] ?? "");
-  const ignoreCase = !!inv.flags.i || !!inv.flags["ignore-case"] || !!inv.flags.ignoreCase;
+  const ignore_case = !!inv.flags.i || !!inv.flags["ignore-case"];
   return (input: unknown) =>
     as_lines(input).filter((line) =>
-      ignoreCase ? line.toLowerCase().includes(needle.toLowerCase()) : line.includes(needle),
+      ignore_case ? line.toLowerCase().includes(needle.toLowerCase()) : line.includes(needle),
     );
 };
 
-const shell2 = interpreter({ "|": pipe_operator() }, {
+const shell_direct = interpreter({ "|": pipe_operator() }, {
   values: {
     ...shell.values,
-    grepcase: cliGrep,
+    grepcase: cli_grep,
   },
 });
 console.log("shell-direct", {
-  withFlag: shell2('? | grepcase -i "hello" | join_comma', greetings),
+  with_flag: shell_direct('? | grepcase -i "hello" | join_comma', greetings),
 });
 
 function pipe_operator(): BinaryOperatorDefinition<

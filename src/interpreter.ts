@@ -480,25 +480,25 @@ type PositionalPlaceholder = {
 };
 
 /** Brand for flag values parsed from `--name` or `-x` (and `--name=val`) in command invocations. */
-const flagBrand: unique symbol = Symbol("terp.flag");
+const flag_brand: unique symbol = Symbol("terp.flag");
 
 export type Flag = {
-  readonly [flagBrand]: true;
+  readonly [flag_brand]: true;
   /** The flag name without leading dashes, e.g. "hello" for `--hello`, "v" for `-v`. */
   readonly name: string;
   /** Attached value for `--name=value` form; undefined for bare flags. */
   readonly value?: unknown;
 };
 
-export function isFlag(value: unknown): value is Flag {
-  return typeof value === "object" && value !== null && flagBrand in value;
+export function is_flag(value: unknown): value is Flag {
+  return typeof value === "object" && value !== null && flag_brand in value;
 }
 
-export function getFlagName(flag: Flag): string {
+export function get_flag_name(flag: Flag): string {
   return flag.name;
 }
 
-export function getFlagValue(flag: Flag): unknown {
+export function get_flag_value(flag: Flag): unknown {
   return flag.value;
 }
 
@@ -1669,8 +1669,10 @@ function read_value(
     return literal;
   }
 
-  // Command invocation support for shell-like syntax: CMD [ --flag | -x | WORD ]...
-  // Triggers only for identifiers that name a *function* in the registry. The fn receives a CommandInvocation record.
+  // Support for invoking functions from `values` with shell-like syntax or direct arguments.
+  // - If flags are present (e.g. `cmd --verbose ?x`), the function receives a CommandInvocation.
+  // - Otherwise (e.g. `myfunc a ?`), it is called directly with the positional arguments.
+  // Bare function names (no following words) return the function itself (for pipelines).
   const command = read_command_invocation(operators, text, index, context, options);
   if (command !== undefined) {
     return command;
@@ -1709,10 +1711,12 @@ function read_named_value(
 }
 
 /**
- * Support direct shell-like command syntax inside expressions.
- * A command is an identifier (present as fn in values) followed by zero or more words.
- * Words can be flags or bare words/literals/placeholders/parenthesized.
- * The registered function value is invoked with a CommandInvocation record containing flags + positionals.
+ * Support invoking functions from `values` using either:
+ * - Shell/CLI style with flags: `cmd --flag value ?x`  → fn receives CommandInvocation
+ * - Direct positional args: `myfunc a ?`               → fn("a", placeholder)
+ *
+ * Only functions (not other values) trigger this.
+ * If no following words, the bare function is returned (for use in pipelines etc).
  */
 function read_command_invocation(
   operators: OperatorRegistry,
@@ -1769,8 +1773,17 @@ function read_command_invocation(
     return { value: raw_validation_value, next };
   }
 
-  const invocation = createCommandInvocation(ident.name, words);
-  const result = candidate(invocation);
+  const invocation = create_command_invocation(ident.name, words);
+
+  let result;
+  if (Object.keys(invocation.flags).length > 0) {
+    // CLI-style with flags: pass the full record
+    result = candidate(invocation);
+  } else {
+    // Normal function call with direct positional arguments
+    result = candidate(...invocation.positionals);
+  }
+
   return { value: result, next };
 }
 
@@ -1808,14 +1821,14 @@ export type CommandInvocation = {
   readonly positionals: readonly unknown[];
 };
 
-function createCommandInvocation(name: string, words: readonly unknown[]): CommandInvocation {
+function create_command_invocation(name: string, words: readonly unknown[]): CommandInvocation {
   const flags: Record<string, unknown> = Object.create(null);
   const positionals: unknown[] = [];
   const args: unknown[] = [];
 
   for (const w of words) {
     args.push(w);
-    if (isFlag(w)) {
+    if (is_flag(w)) {
       const f = w as Flag;
       flags[f.name] = f.value !== undefined ? f.value : true;
     } else {
@@ -2107,7 +2120,7 @@ function read_flag(
   }
 
   const flagValue: Flag = {
-    [flagBrand]: true,
+    [flag_brand]: true,
     name,
     ...(attached !== undefined ? { value: attached } : {}),
   };
