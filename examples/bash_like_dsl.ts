@@ -66,29 +66,6 @@ console.log("bash-like", {
   home_name: shell('env "HOME" | basename'),
 });
 
-// New: functions in `values` can be invoked with shell-style space-separated
-// arguments. Prefixed tokens like "-i" or "--ignore-case" are passed as strings.
-// The function receives them directly as ...args (supports rest/variadic).
-const cli_grep = (...args: string[]) => {
-  const ignore_case = args.some(a => a === "-i" || a === "--ignore-case" || a === "i" || a === "ignore-case");
-  // The pattern is the first arg that doesn't look like a flag
-  const needle = args.find(a => !a.startsWith("-")) ?? "";
-  return (input: unknown) =>
-    as_lines(input).filter((line) =>
-      ignore_case ? line.toLowerCase().includes(needle.toLowerCase()) : line.includes(needle),
-    );
-};
-
-const shell_direct = interpreter({ "|": pipe_operator() }, {
-  values: {
-    ...shell.values,
-    grepcase: cli_grep,
-  },
-});
-console.log("shell-direct", {
-  with_flag: shell_direct('? | grepcase -i "hello" | join_comma', greetings),
-});
-
 function pipe_operator(): BinaryOperatorDefinition<
   "shell",
   unknown,

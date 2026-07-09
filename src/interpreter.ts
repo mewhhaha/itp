@@ -240,6 +240,69 @@ type ParenthesizedOperatorToken<
 
 type ValueToken<values extends ValueRegistry> = keyof values & string;
 
+type WordNameRest<text extends string> = text extends "" ? true
+  : text extends `${infer character}${infer rest}`
+    ? character extends IdentifierPart | "-" ? WordNameRest<rest>
+    : false
+  : false;
+
+type WordName<text extends string> = text extends
+  `${infer character}${infer rest}`
+  ? character extends IdentifierStart ? WordNameRest<rest>
+  : false
+  : false;
+
+type PrefixedWordSyntax<
+  text extends string,
+  prefixes extends readonly string[],
+> = true extends (
+  prefixes[number] extends infer prefix extends string
+    ? text extends `${prefix}${infer word}` ? WordName<word>
+    : false
+    : false
+) ? true
+  : false;
+
+type CallToken<token extends string, rest extends string> = {
+  readonly token: token;
+  readonly rest: rest;
+};
+
+type ReadQuotedCallToken<
+  text extends string,
+  quote extends StringQuote,
+  content extends string = "",
+> = text extends `${infer character}${infer rest}`
+  ? character extends "\\"
+    ? rest extends `${infer escaped}${infer after_escape}`
+      ? escaped extends StringEscape ? ReadQuotedCallToken<
+          after_escape,
+          quote,
+          `${content}\\${escaped}`
+        >
+      : never
+    : never
+  : character extends quote ? CallToken<`${quote}${content}${quote}`, rest>
+  : ReadQuotedCallToken<rest, quote, `${content}${character}`>
+  : never;
+
+type ReadPlainCallToken<
+  text extends string,
+  token extends string = "",
+> = text extends "" ? token extends "" ? never
+  : CallToken<token, "">
+  : text extends `${Whitespace}${infer rest}`
+    ? token extends "" ? ReadPlainCallToken<rest>
+    : CallToken<token, `${Whitespace}${rest}`>
+  : text extends `${infer character}${infer rest}`
+    ? ReadPlainCallToken<rest, `${token}${character}`>
+  : never;
+
+type ReadCallToken<text extends string> = TrimLeft<text> extends
+  `"${infer rest}` ? ReadQuotedCallToken<rest, '"'>
+  : TrimLeft<text> extends `'${infer rest}` ? ReadQuotedCallToken<rest, "'">
+  : ReadPlainCallToken<TrimLeft<text>>;
+
 type ReferenceSyntax<reference extends string> = Digits<Trim<reference>> extends
   true ? true
   : Identifier<Trim<reference>>;
@@ -247,22 +310,26 @@ type ReferenceSyntax<reference extends string> = Digits<Trim<reference>> extends
 type StringOperandSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operand,
-> = ValueStringSyntax<operators, values, operand> extends true ? true
-  : operand extends string
-    ? [UnaryStringSyntax<operators, values, Trim<operand>>] extends [never]
-      ? false
+> = ValueStringSyntax<operators, values, word_prefixes, operand> extends true
+  ? true
+  : operand extends string ? IsNever<
+      UnaryStringSyntax<operators, values, word_prefixes, Trim<operand>>
+    > extends true ? false
     : true
   : false;
 
 type UnaryStringSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 1>,
 > = operator extends string
   ? Trim<expression> extends `${operator}${infer operand}`
-    ? StringOperandSyntax<operators, values, operand> extends true ? true
+    ? StringOperandSyntax<operators, values, word_prefixes, operand> extends
+      true ? true
     : never
   : never
   : never;
@@ -270,6 +337,7 @@ type UnaryStringSyntax<
 type ValueStringSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operand,
 > = operand extends string ? Trim<operand> extends "" ? false
   : Trim<operand> extends "?" ? true
@@ -280,23 +348,37 @@ type ValueStringSyntax<
   : Trim<operand> extends ValueToken<values> ? true
   : Trim<operand> extends ParenthesizedOperatorToken<operators> ? true
   : Trim<operand> extends `(${infer expression})`
-    ? [StringSyntax<operators, values, expression>] extends [never] ? false
+    ? [StringSyntax<operators, values, word_prefixes, expression>] extends
+      [never] ? false
     : true
+  : FunctionCallStringSyntax<
+    operators,
+    values,
+    word_prefixes,
+    Trim<operand>
+  > extends true ? true
   : false
   : false;
 
 type BinaryStringSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
-> = operator extends string
-  ? BinaryStringSyntaxForOperator<operators, values, Trim<expression>, operator>
+> = operator extends string ? BinaryStringSyntaxForOperator<
+    operators,
+    values,
+    word_prefixes,
+    Trim<expression>,
+    operator
+  >
   : never;
 
 type BinaryStringSyntaxForOperator<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator extends string,
   prefix extends string = "",
@@ -309,12 +391,14 @@ type BinaryStringSyntaxForOperator<
   > extends true ? BinaryStringTailSyntax<
       operators,
       values,
+      word_prefixes,
       `${prefix}${left}`,
       right
     > extends infer syntax
       ? [syntax] extends [never] ? BinaryStringSyntaxForOperator<
           operators,
           values,
+          word_prefixes,
           right,
           operator,
           `${prefix}${left}${operator}`
@@ -324,6 +408,7 @@ type BinaryStringSyntaxForOperator<
   : BinaryStringSyntaxForOperator<
     operators,
     values,
+    word_prefixes,
     right,
     operator,
     `${prefix}${left}${operator}`
@@ -333,11 +418,13 @@ type BinaryStringSyntaxForOperator<
 type BinaryStringHasReference<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
 > = operator extends string ? BinaryStringHasReferenceForOperator<
     operators,
     values,
+    word_prefixes,
     Trim<expression>,
     operator
   >
@@ -346,6 +433,7 @@ type BinaryStringHasReference<
 type BinaryStringHasReferenceForOperator<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator extends string,
   prefix extends string = "",
@@ -358,24 +446,32 @@ type BinaryStringHasReferenceForOperator<
   > extends true ? BinaryStringTailSyntax<
       operators,
       values,
+      word_prefixes,
       `${prefix}${left}`,
       right
     > extends infer syntax
       ? [syntax] extends [never] ? BinaryStringHasReferenceForOperator<
           operators,
           values,
+          word_prefixes,
           right,
           operator,
           `${prefix}${left}${operator}`
         >
       : Or<
-        ValueExpressionHasReference<operators, values, `${prefix}${left}`>,
-        ValueExpressionHasReference<operators, values, right>
+        ValueExpressionHasReference<
+          operators,
+          values,
+          word_prefixes,
+          `${prefix}${left}`
+        >,
+        ValueExpressionHasReference<operators, values, word_prefixes, right>
       >
     : never
   : BinaryStringHasReferenceForOperator<
     operators,
     values,
+    word_prefixes,
     right,
     operator,
     `${prefix}${left}${operator}`
@@ -385,29 +481,37 @@ type BinaryStringHasReferenceForOperator<
 type BinaryStringTailSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   left extends string,
   right extends string,
-> = ValueExpressionTailSyntax<operators, values, left> extends true
-  ? ValueExpressionTailSyntax<operators, values, right> extends true ? true
+> = ValueExpressionTailSyntax<operators, values, word_prefixes, left> extends
+  true
+  ? ValueExpressionTailSyntax<operators, values, word_prefixes, right> extends
+    true ? true
   : never
   : never;
 
 type ValueExpressionTailSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
-> = StringOperandSyntax<operators, values, expression> extends true ? true
-  : BinaryStringSyntax<operators, values, expression> extends infer syntax
-    ? [syntax] extends [never] ? never
+> = StringOperandSyntax<operators, values, word_prefixes, expression> extends
+  true ? true
+  : BinaryStringSyntax<operators, values, word_prefixes, expression> extends
+    infer syntax ? [syntax] extends [never] ? never
     : true
   : never;
 
 type StringSyntax<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
-> = StringOperandSyntax<operators, values, expression> extends true ? true
-  : BinaryStringSyntax<operators, values, expression> extends never ? never
+> = StringOperandSyntax<operators, values, word_prefixes, expression> extends
+  true ? true
+  : BinaryStringSyntax<operators, values, word_prefixes, expression> extends
+    never ? never
   : true;
 
 type StringSyntaxMessageFor<expression extends string> = StringSyntaxMessage<
@@ -418,32 +522,37 @@ type Or<left, right> = left extends true ? true
   : right extends true ? true
   : false;
 
+type IsNever<value> = [value] extends [never] ? true : false;
+
 type StringOperandHasReference<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operand,
-> = ValueStringSyntax<operators, values, operand> extends true
-  ? ValueStringHasReference<operators, values, operand>
-  : operand extends string
-    ? [UnaryStringHasReference<operators, values, Trim<operand>>] extends
-      [never] ? false
-    : UnaryStringHasReference<operators, values, Trim<operand>>
+> = ValueStringSyntax<operators, values, word_prefixes, operand> extends true
+  ? ValueStringHasReference<operators, values, word_prefixes, operand>
+  : operand extends string ? IsNever<
+      UnaryStringHasReference<operators, values, word_prefixes, Trim<operand>>
+    > extends true ? false
+    : UnaryStringHasReference<operators, values, word_prefixes, Trim<operand>>
   : false;
 
 type UnaryStringHasReference<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 1>,
 > = operator extends string
   ? Trim<expression> extends `${operator}${infer operand}`
-    ? StringOperandHasReference<operators, values, operand>
+    ? StringOperandHasReference<operators, values, word_prefixes, operand>
   : never
   : never;
 
 type ValueStringHasReference<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operand,
 > = operand extends string ? Trim<operand> extends "?" ? true
   : Trim<operand> extends `?${infer reference}` ? ReferenceSyntax<reference>
@@ -453,18 +562,28 @@ type ValueStringHasReference<
   : Trim<operand> extends ValueToken<values> ? false
   : Trim<operand> extends ParenthesizedOperatorToken<operators> ? false
   : Trim<operand> extends `(${infer expression})`
-    ? StringExpressionHasReference<operators, values, expression>
-  : false
+    ? StringExpressionHasReference<operators, values, word_prefixes, expression>
+  : FunctionCallStringHasReference<
+    operators,
+    values,
+    word_prefixes,
+    Trim<operand>
+  >
   : false;
 
 type ValueExpressionHasReference<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
-> = StringOperandSyntax<operators, values, expression> extends true
-  ? StringOperandHasReference<operators, values, expression>
-  : BinaryStringHasReference<operators, values, expression> extends
-    infer has_reference ? [has_reference] extends [never] ? false
+> = StringOperandSyntax<operators, values, word_prefixes, expression> extends
+  true ? StringOperandHasReference<operators, values, word_prefixes, expression>
+  : BinaryStringHasReference<
+    operators,
+    values,
+    word_prefixes,
+    expression
+  > extends infer has_reference ? [has_reference] extends [never] ? false
     : has_reference extends true ? true
     : false
   : false;
@@ -472,41 +591,13 @@ type ValueExpressionHasReference<
 type StringExpressionHasReference<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
-> = ValueExpressionHasReference<operators, values, expression>;
+> = ValueExpressionHasReference<operators, values, word_prefixes, expression>;
 
 type PositionalPlaceholder = {
   readonly __itp_placeholder: "positional";
 };
-
-/** Brand for prefixed tokens (e.g. -v, --foo) recognized in function argument lists. */
-const flag_brand: unique symbol = Symbol("terp.flag");
-
-export type Flag<Name extends string = string> = {
-  readonly [flag_brand]: true;
-  /** The prefix used, e.g. "-" or "--" or custom like "@". */
-  readonly prefix: string;
-  /** The name after the prefix, e.g. "hello" for `--hello`, "v" for `-v`. */
-  readonly name: Name;
-  /** Attached value for `--name=value` form; undefined for bare flags. */
-  readonly value?: unknown;
-};
-
-export function is_flag(value: unknown): value is Flag {
-  return typeof value === "object" && value !== null && flag_brand in value;
-}
-
-export function get_flag_prefix(flag: Flag): string {
-  return flag.prefix;
-}
-
-export function get_flag_name<Name extends string>(flag: Flag<Name>): Name {
-  return flag.name;
-}
-
-export function get_flag_value(flag: Flag): unknown {
-  return flag.value;
-}
 
 type NamedScopePlaceholderArg = {
   readonly __itp_placeholder_arg: "scope";
@@ -781,26 +872,179 @@ type TypeMatches<value, expected> = unknown extends value ? true
   : [value] extends [expected] ? true
   : false;
 
+type FunctionCallStringSyntax<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  word_prefixes extends readonly string[],
+  expression extends string,
+> = IsNever<
+  TypeEvaluateFunctionCall<operators, values, word_prefixes, expression>
+> extends true ? false
+  : true;
+
+type FunctionCallStringHasReference<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  word_prefixes extends readonly string[],
+  expression extends string,
+> = TypeEvaluateFunctionCall<
+  operators,
+  values,
+  word_prefixes,
+  expression
+> extends infer evaluation ? [evaluation] extends [never] ? false
+  : TypeEvaluationArgs<evaluation> extends readonly [] ? false
+  : true
+  : false;
+
+type TypeEvaluateFunctionCall<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  word_prefixes extends readonly string[],
+  expression extends string,
+> = ReadCallToken<TrimLeft<expression>> extends CallToken<
+  infer name,
+  infer rest
+> ? Trim<rest> extends "" ? never
+  : Identifier<Trim<name>> extends true
+    ? Trim<name> extends ValueToken<values>
+      ? values[Trim<name>] extends (...args: infer parameters) => infer result
+        ? TypeApplyValueFunction<
+          parameters,
+          result,
+          TypeEvaluateWordArguments<operators, values, word_prefixes, rest>
+        >
+      : never
+    : never
+  : never
+  : never;
+
+type TypeEvaluateWordArguments<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  word_prefixes extends readonly string[],
+  text extends string,
+  parsed extends readonly unknown[] = readonly [],
+> = Trim<text> extends "" ? parsed
+  : ReadCallToken<text> extends CallToken<infer token, infer rest>
+    ? TypeEvaluateWordArgument<operators, values, word_prefixes, token> extends
+      infer argument ? [argument] extends [never] ? never
+      : TypeEvaluateWordArguments<
+        operators,
+        values,
+        word_prefixes,
+        rest,
+        readonly [...parsed, argument]
+      >
+    : never
+  : never;
+
+type TypeEvaluateWordArgument<
+  operators extends OperatorRegistry,
+  values extends ValueRegistry,
+  word_prefixes extends readonly string[],
+  token extends string,
+> = Trim<token> extends "?" | `?${string}`
+  ? TypeEvaluateValue<operators, values, word_prefixes, token>
+  : Trim<token> extends `${number}` ? TypeEvaluation<number, readonly []>
+  : Trim<token> extends "true" | "false" ? TypeEvaluation<boolean, readonly []>
+  : StringLiteral<Trim<token>> extends true
+    ? TypeEvaluation<string, readonly []>
+  : PrefixedWordSyntax<Trim<token>, word_prefixes> extends true
+    ? TypeEvaluation<string, readonly []>
+  : Trim<token> extends ValueToken<values>
+    ? TypeEvaluation<values[Trim<token>], readonly []>
+  : Identifier<Trim<token>> extends true ? TypeEvaluation<string, readonly []>
+  : Trim<token> extends ParenthesizedOperatorToken<operators>
+    ? TypeEvaluateValue<operators, values, word_prefixes, token>
+  : Trim<token> extends `(${string})`
+    ? TypeEvaluateValue<operators, values, word_prefixes, token>
+  : never;
+
+type TypeApplyValueFunction<
+  parameters extends readonly unknown[],
+  result,
+  arguments_evaluation extends readonly unknown[],
+  constrained_arguments = ConstrainFunctionArguments<
+    arguments_evaluation,
+    parameters
+  >,
+> = [constrained_arguments] extends [never] ? never
+  : constrained_arguments extends readonly unknown[]
+    ? FunctionArgumentValues<constrained_arguments> extends parameters
+      ? TypeEvaluation<
+        result,
+        FunctionPlaceholderArgs<constrained_arguments>
+      >
+    : never
+  : never;
+
+type ConstrainFunctionArguments<
+  arguments_evaluation extends readonly unknown[],
+  parameters extends readonly unknown[],
+> = number extends parameters["length"]
+  ? ConstrainFunctionRestArguments<arguments_evaluation, parameters[number]>
+  : arguments_evaluation extends readonly [infer argument, ...infer rest]
+    ? parameters extends readonly [infer parameter, ...infer parameter_rest]
+      ? readonly [
+        ConstrainEvaluation<argument, parameter>,
+        ...ConstrainFunctionArguments<rest, parameter_rest>,
+      ]
+    : never
+  : readonly [];
+
+type ConstrainFunctionRestArguments<
+  arguments_evaluation extends readonly unknown[],
+  parameter,
+> = arguments_evaluation extends readonly [infer argument, ...infer rest]
+  ? readonly [
+    ConstrainEvaluation<argument, parameter>,
+    ...ConstrainFunctionRestArguments<rest, parameter>,
+  ]
+  : readonly [];
+
+type FunctionArgumentValues<arguments_evaluation extends readonly unknown[]> =
+  arguments_evaluation extends readonly [infer argument, ...infer rest]
+    ? argument extends TypeEvaluation<infer value, readonly unknown[]>
+      ? [value, ...FunctionArgumentValues<rest>]
+    : never
+    : [];
+
+type FunctionPlaceholderArgs<arguments_evaluation extends readonly unknown[]> =
+  arguments_evaluation extends readonly [infer argument, ...infer rest]
+    ? readonly [
+      ...TypeEvaluationArgs<argument>,
+      ...FunctionPlaceholderArgs<rest>,
+    ]
+    : readonly [];
+
 type TypeEvaluateOperand<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operand,
-> = ValueStringSyntax<operators, values, operand> extends true
-  ? TypeEvaluateValue<operators, values, operand>
-  : operand extends string ? TypeEvaluateUnary<operators, values, Trim<operand>>
+> = ValueStringSyntax<operators, values, word_prefixes, operand> extends true
+  ? TypeEvaluateValue<operators, values, word_prefixes, operand>
+  : operand extends string ? TypeEvaluateUnary<
+      operators,
+      values,
+      word_prefixes,
+      Trim<operand>
+    >
   : TypeEvaluation<unknown, readonly unknown[]>;
 
 type TypeEvaluateUnary<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 1>,
 > = operator extends keyof operators & string
   ? Trim<expression> extends `${operator}${infer operand}`
-    ? StringOperandSyntax<operators, values, operand> extends true
-      ? TypeApplyUnary<
+    ? StringOperandSyntax<operators, values, word_prefixes, operand> extends
+      true ? TypeApplyUnary<
         TypedOperatorDefinition<operators, operator, 1>,
-        TypeEvaluateOperand<operators, values, operand>
+        TypeEvaluateOperand<operators, values, word_prefixes, operand>
       >
     : never
   : never
@@ -809,6 +1053,7 @@ type TypeEvaluateUnary<
 type TypeEvaluateValue<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operand,
 > = operand extends string
   ? Trim<operand> extends "?"
@@ -828,48 +1073,58 @@ type TypeEvaluateValue<
     ? TypeEvaluation<boolean, readonly []>
   : StringLiteral<Trim<operand>> extends true
     ? TypeEvaluation<string, readonly []>
-  : Trim<operand> extends `--${string}` | `-${string}`
-    ? TypeEvaluation<string, readonly []>
   : Trim<operand> extends ValueToken<values>
     ? TypeEvaluation<values[Trim<operand>], readonly []>
   : Trim<operand> extends `(${infer token})`
     ? token extends OperatorToken<operators>
       ? TypeEvaluation<operators[token], readonly []>
     : Trim<operand> extends `(${infer expression})`
-      ? TypeEvaluateExpression<operators, values, expression>
+      ? TypeEvaluateExpression<operators, values, word_prefixes, expression>
     : TypeEvaluation<unknown, readonly unknown[]>
-  : Trim<operand> extends `${infer cmd} ${infer rest}`
-    ? Identifier<Trim<cmd>> extends true
-      ? Trim<cmd> extends ValueToken<values>
-        ? TypeEvaluateExpression<operators, values, rest> extends infer restE
-          ? TypeEvaluation<values[Trim<cmd>], TypeEvaluationArgs<restE>>
-          : TypeEvaluation<unknown, readonly unknown[]>
-        : TypeEvaluation<unknown, readonly unknown[]>
-      : TypeEvaluation<unknown, readonly unknown[]>
+  : FunctionCallStringSyntax<
+    operators,
+    values,
+    word_prefixes,
+    Trim<operand>
+  > extends true
+    ? TypeEvaluateFunctionCall<operators, values, word_prefixes, Trim<operand>>
   : TypeEvaluation<unknown, readonly unknown[]>
   : TypeEvaluation<unknown, readonly unknown[]>;
 
 type TypeEvaluateBinary<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
-> = TypeEvaluateBinaryLeft<operators, values, expression, operator> extends
-  infer left_evaluation
-  ? [left_evaluation] extends [never]
-    ? TypeEvaluateBinaryRight<operators, values, expression, operator>
+> = TypeEvaluateBinaryLeft<
+  operators,
+  values,
+  word_prefixes,
+  expression,
+  operator
+> extends infer left_evaluation
+  ? [left_evaluation] extends [never] ? TypeEvaluateBinaryRight<
+      operators,
+      values,
+      word_prefixes,
+      expression,
+      operator
+    >
   : left_evaluation
   : never;
 
 type TypeEvaluateBinaryLeft<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
 > = operator extends keyof operators & string
   ? TypeEvaluateBinaryLeftForOperator<
     operators,
     values,
+    word_prefixes,
     Trim<expression>,
     operator
   >
@@ -878,12 +1133,14 @@ type TypeEvaluateBinaryLeft<
 type TypeEvaluateBinaryRight<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator = OperatorTokenWithArity<operators, 2>,
 > = operator extends keyof operators & string
   ? TypeEvaluateBinaryRightForOperator<
     operators,
     values,
+    word_prefixes,
     Trim<expression>,
     operator
   >
@@ -892,6 +1149,7 @@ type TypeEvaluateBinaryRight<
 type TypeEvaluateBinaryRightForOperator<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator extends keyof operators & string,
   prefix extends string = "",
@@ -904,6 +1162,7 @@ type TypeEvaluateBinaryRightForOperator<
   > extends true ? TypeEvaluateBinaryTail<
       operators,
       values,
+      word_prefixes,
       operator,
       `${prefix}${left}`,
       right
@@ -911,6 +1170,7 @@ type TypeEvaluateBinaryRightForOperator<
       ? [evaluation] extends [never] ? TypeEvaluateBinaryRightForOperator<
           operators,
           values,
+          word_prefixes,
           right,
           operator,
           `${prefix}${left}${operator}`
@@ -920,6 +1180,7 @@ type TypeEvaluateBinaryRightForOperator<
   : TypeEvaluateBinaryRightForOperator<
     operators,
     values,
+    word_prefixes,
     right,
     operator,
     `${prefix}${left}${operator}`
@@ -929,6 +1190,7 @@ type TypeEvaluateBinaryRightForOperator<
 type TypeEvaluateBinaryLeftForOperator<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   operator extends keyof operators & string,
   prefix extends string = "",
@@ -941,6 +1203,7 @@ type TypeEvaluateBinaryLeftForOperator<
   > extends true ? TypeEvaluateBinaryLeftForOperator<
       operators,
       values,
+      word_prefixes,
       right,
       operator,
       `${prefix}${left}${operator}`
@@ -948,6 +1211,7 @@ type TypeEvaluateBinaryLeftForOperator<
       ? [later] extends [never] ? TypeEvaluateBinaryLeftTail<
           operators,
           values,
+          word_prefixes,
           operator,
           `${prefix}${left}`,
           right
@@ -957,6 +1221,7 @@ type TypeEvaluateBinaryLeftForOperator<
   : TypeEvaluateBinaryLeftForOperator<
     operators,
     values,
+    word_prefixes,
     right,
     operator,
     `${prefix}${left}${operator}`
@@ -966,15 +1231,17 @@ type TypeEvaluateBinaryLeftForOperator<
 type TypeEvaluateBinaryTail<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operator extends keyof operators & string,
   left extends string,
   right extends string,
-> = ValueExpressionTailSyntax<operators, values, left> extends true
-  ? ValueExpressionTailSyntax<operators, values, right> extends true
-    ? TypeApplyBinary<
+> = ValueExpressionTailSyntax<operators, values, word_prefixes, left> extends
+  true
+  ? ValueExpressionTailSyntax<operators, values, word_prefixes, right> extends
+    true ? TypeApplyBinary<
       TypedOperatorDefinition<operators, operator, 2>,
-      TypeEvaluateExpression<operators, values, left>,
-      TypeEvaluateExpression<operators, values, right>
+      TypeEvaluateExpression<operators, values, word_prefixes, left>,
+      TypeEvaluateExpression<operators, values, word_prefixes, right>
     >
   : never
   : never;
@@ -982,15 +1249,17 @@ type TypeEvaluateBinaryTail<
 type TypeEvaluateBinaryLeftTail<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   operator extends keyof operators & string,
   left extends string,
   right extends string,
-> = ValueExpressionTailSyntax<operators, values, left> extends true
-  ? ValueExpressionTailSyntax<operators, values, right> extends true
-    ? TypeApplyBinary<
+> = ValueExpressionTailSyntax<operators, values, word_prefixes, left> extends
+  true
+  ? ValueExpressionTailSyntax<operators, values, word_prefixes, right> extends
+    true ? TypeApplyBinary<
       TypedOperatorDefinition<operators, operator, 2>,
-      TypeEvaluateExpression<operators, values, left>,
-      TypeEvaluateExpression<operators, values, right>
+      TypeEvaluateExpression<operators, values, word_prefixes, left>,
+      TypeEvaluateExpression<operators, values, word_prefixes, right>
     >
   : never
   : never;
@@ -998,20 +1267,24 @@ type TypeEvaluateBinaryLeftTail<
 type TypeEvaluateExpression<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
-> = StringOperandSyntax<operators, values, expression> extends true
-  ? TypeEvaluateOperand<operators, values, expression>
-  : BinaryStringSyntax<operators, values, expression> extends never
-    ? TypeEvaluation<unknown, readonly unknown[]>
-  : TypeEvaluateBinary<operators, values, expression>;
+> = StringOperandSyntax<operators, values, word_prefixes, expression> extends
+  true ? TypeEvaluateOperand<operators, values, word_prefixes, expression>
+  : BinaryStringSyntax<operators, values, word_prefixes, expression> extends
+    never ? TypeEvaluation<unknown, readonly unknown[]>
+  : TypeEvaluateBinary<operators, values, word_prefixes, expression>;
 
 /** @internal */
 export type StringExpressionType<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
   expression extends string,
+  word_prefixes extends readonly string[] = readonly [],
 > = NormalizeExpressionType<
-  TypeEvaluationValue<TypeEvaluateExpression<operators, values, expression>>
+  TypeEvaluationValue<
+    TypeEvaluateExpression<operators, values, word_prefixes, expression>
+  >
 >;
 
 type NormalizeExpressionType<value> = value extends PositionalPlaceholder
@@ -1023,9 +1296,12 @@ export type StringExpressionArgs<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
   expression extends string,
+  word_prefixes extends readonly string[] = readonly [],
 > = string extends expression ? readonly unknown[]
   : NormalizePlaceholderArgs<
-    TypeEvaluationArgs<TypeEvaluateExpression<operators, values, expression>>
+    TypeEvaluationArgs<
+      TypeEvaluateExpression<operators, values, word_prefixes, expression>
+    >
   >;
 
 type StringTypeMessageFor<expression extends string> = StringSyntaxMessage<
@@ -1036,35 +1312,52 @@ type StringTypeMessageFor<expression extends string> = StringSyntaxMessage<
 type StringCallResult<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
   rest extends readonly unknown[],
 > = string extends expression ? unknown
-  : StringSyntax<operators, values, expression> extends never
+  : StringSyntax<operators, values, word_prefixes, expression> extends never
     ? StringSyntaxMessageFor<expression>
-  : TypeEvaluateExpression<operators, values, expression> extends
+  : TypeEvaluateExpression<operators, values, word_prefixes, expression> extends
     infer evaluation ? [evaluation] extends [never] ? StringTypeMessageFor<
         expression
       >
-    : rest extends readonly []
-      ? StringExpressionHasReference<operators, values, expression> extends true
-        ? StringRunner<operators, expression, values>
+    : rest extends readonly [] ? StringExpressionHasReference<
+        operators,
+        values,
+        word_prefixes,
+        expression
+      > extends true
+        ? StringRunner<operators, expression, values, word_prefixes>
+      : FunctionCallStringSyntax<
+        operators,
+        values,
+        word_prefixes,
+        expression
+      > extends true ? StringExpressionType<
+          operators,
+          values,
+          expression,
+          word_prefixes
+        >
       : unknown
-    : StringExpressionType<operators, values, expression>
+    : StringExpressionType<operators, values, expression, word_prefixes>
   : StringTypeMessageFor<expression>;
 
 /** @internal */
 type DirectStringCallResult<
   operators extends OperatorRegistry,
   values extends ValueRegistry,
+  word_prefixes extends readonly string[],
   expression extends string,
 > = string extends expression ? unknown
-  : StringSyntax<operators, values, expression> extends never
+  : StringSyntax<operators, values, word_prefixes, expression> extends never
     ? StringSyntaxMessageFor<expression>
-  : TypeEvaluateExpression<operators, values, expression> extends
+  : TypeEvaluateExpression<operators, values, word_prefixes, expression> extends
     infer evaluation ? [evaluation] extends [never] ? StringTypeMessageFor<
         expression
       >
-    : StringExpressionType<operators, values, expression>
+    : StringExpressionType<operators, values, expression, word_prefixes>
   : StringTypeMessageFor<expression>;
 
 /** @internal */
@@ -1081,9 +1374,15 @@ export type StringRunner<
   _operators extends OperatorRegistry,
   _expression extends string,
   _values extends ValueRegistry = EmptyValueRegistry,
+  _word_prefixes extends readonly string[] = readonly [],
 > = (
-  ...values: StringExpressionArgs<_operators, _values, _expression>
-) => StringExpressionType<_operators, _values, _expression>;
+  ...values: StringExpressionArgs<
+    _operators,
+    _values,
+    _expression,
+    _word_prefixes
+  >
+) => StringExpressionType<_operators, _values, _expression, _word_prefixes>;
 
 /** Runtime-only expression runner returned by {@link Interpreter.raw}. */
 export type RawStringRunner = (...values: unknown[]) => unknown;
@@ -1141,22 +1440,29 @@ export type InterpreterApplyOperator = (
 /** Runtime options for a string interpreter. */
 export interface InterpreterOptions<
   values extends ValueRegistry = EmptyValueRegistry,
+  word_prefixes extends readonly string[] = readonly [],
 > {
   /** Override operator application while preserving parsing and precedence. */
   readonly apply_operator?: InterpreterApplyOperator;
   /** Named values that can be referenced directly from expressions. */
   readonly values?: values;
-  /** Prefix strings (e.g. "-", "--", "@") recognized when parsing words after
-   * a function name from `values`. Allows custom prefixes beyond CLI flags.
-   * Default: ["-", "--"]
+  /** Prefix strings recognized for words passed to callable values.
+   *
+   * Default: []
    */
-  readonly prefixes?: readonly string[];
+  readonly word_prefixes?: word_prefixes;
 }
+
+type RuntimeInterpreterOptions = InterpreterOptions<
+  ValueRegistry,
+  readonly string[]
+>;
 
 /** Callable interpreter with its operator registry attached. */
 export type Interpreter<
   operators extends OperatorRegistry,
   values extends ValueRegistry = EmptyValueRegistry,
+  word_prefixes extends readonly string[] = readonly [],
 > = {
   readonly operators: operators;
   readonly values: values;
@@ -1178,32 +1484,41 @@ export type Interpreter<
   <const expression extends string>(
     expression: CheckedArgument<
       expression,
-      StringCallResult<operators, values, expression, readonly []>
+      StringCallResult<
+        operators,
+        values,
+        word_prefixes,
+        expression,
+        readonly []
+      >
     >,
   ): CheckedResult<
-    StringCallResult<operators, values, expression, readonly []>
+    StringCallResult<operators, values, word_prefixes, expression, readonly []>
   >;
   <const expression extends string>(
     expression: CheckedArgument<
       expression,
-      DirectStringCallResult<operators, values, expression>
+      DirectStringCallResult<operators, values, word_prefixes, expression>
     >,
-    ...rest: StringExpressionArgs<operators, values, expression>
-  ): CheckedResult<DirectStringCallResult<operators, values, expression>>;
+    ...rest: StringExpressionArgs<operators, values, expression, word_prefixes>
+  ): CheckedResult<
+    DirectStringCallResult<operators, values, word_prefixes, expression>
+  >;
 };
 
 /** Create a callable interpreter from an operator registry. */
 export function interpreter<
   const operators extends OperatorRegistry,
   const values extends ValueRegistry = EmptyValueRegistry,
+  const word_prefixes extends readonly string[] = readonly [],
 >(
   operators: operators,
-  options: InterpreterOptions<values> = {},
-): Interpreter<operators, values> {
+  options: InterpreterOptions<values, word_prefixes> = {},
+): Interpreter<operators, values, word_prefixes> {
   operator_registry(operators);
   const named_values = options.values ?? ({} as values);
   validate_value_registry(operators, named_values);
-  const prefixes = options.prefixes ?? ["-", "--"];
+  const configured_word_prefixes = options.word_prefixes ?? [];
 
   const interpreter = ((expression: string, ...substitutions: unknown[]) => {
     return interpret_string_expression(
@@ -1212,9 +1527,9 @@ export function interpreter<
       expression,
       substitutions,
       options,
-      prefixes,
+      configured_word_prefixes,
     );
-  }) as unknown as Interpreter<operators, values>;
+  }) as unknown as Interpreter<operators, values, word_prefixes>;
 
   Object.defineProperty(interpreter, "operators", {
     value: operators,
@@ -1242,6 +1557,7 @@ export function interpreter<
         operators,
         named_values,
         expression,
+        configured_word_prefixes,
       );
 
       if (error !== undefined) {
@@ -1276,6 +1592,7 @@ export function interpreter<
         operators,
         named_values,
         expression,
+        configured_word_prefixes,
       );
 
       if (error !== undefined) {
@@ -1289,6 +1606,7 @@ export function interpreter<
           expression,
           substitutions,
           options,
+          configured_word_prefixes,
         );
       };
     },
@@ -1324,7 +1642,7 @@ type TokenizeContext = {
   readonly values: readonly unknown[];
   readonly resolve_references: boolean;
   value_index: number;
-  prefixes?: readonly string[];
+  readonly word_prefixes: readonly string[];
 };
 
 const raw_validation_value = Symbol("terp.raw.validation.value");
@@ -1376,12 +1694,12 @@ function interpret_string_expression(
   named_values: ValueRegistry,
   expression: string,
   substitutions: readonly unknown[],
-  options: InterpreterOptions,
-  prefixes: readonly string[] = ["-", "--"],
+  options: RuntimeInterpreterOptions,
+  word_prefixes: readonly string[] = [],
 ): unknown {
   if (
     substitutions.length === 0 &&
-    has_reference(operators, named_values, expression, prefixes)
+    has_reference(operators, named_values, expression, word_prefixes)
   ) {
     return (...values: readonly unknown[]) => {
       return evaluate_string_expression(
@@ -1390,7 +1708,7 @@ function interpret_string_expression(
         expression,
         values,
         options,
-        prefixes,
+        word_prefixes,
       );
     };
   }
@@ -1401,7 +1719,7 @@ function interpret_string_expression(
     expression,
     substitutions,
     options,
-    prefixes,
+    word_prefixes,
   );
 }
 
@@ -1410,14 +1728,14 @@ function evaluate_string_expression(
   named_values: ValueRegistry,
   expression: string,
   substitutions: readonly unknown[],
-  options: InterpreterOptions,
-  prefixes: readonly string[] = ["-", "--"],
+  options: RuntimeInterpreterOptions,
+  word_prefixes: readonly string[] = [],
 ): unknown {
   const has_named_references = has_named_reference(
     operators,
     named_values,
     expression,
-    prefixes,
+    word_prefixes,
   );
   const scope = has_named_references ? substitutions[0] : undefined;
   const values = has_named_references ? substitutions.slice(1) : substitutions;
@@ -1426,11 +1744,17 @@ function evaluate_string_expression(
     scope,
     values,
     resolve_references: true,
-    prefixes,
+    word_prefixes,
     value_index: 0,
   };
 
-  const result = evaluate_text(operators, expression, context, options, prefixes);
+  const result = evaluate_text(
+    operators,
+    expression,
+    context,
+    options,
+    word_prefixes,
+  );
 
   if (context.value_index < values.length) {
     throw new TypeError("interpreter expression received too many values");
@@ -1443,21 +1767,29 @@ function validate_raw_string_expression(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
+  word_prefixes: readonly string[] = [],
 ): InterpreterError | undefined {
   const context: TokenizeContext = {
     named_values,
     scope: undefined,
     values: [],
     resolve_references: false,
+    word_prefixes,
     value_index: 0,
   };
 
   try {
-    evaluate_text(operators, expression, context, {
-      apply_operator() {
-        return raw_validation_value;
+    evaluate_text(
+      operators,
+      expression,
+      context,
+      {
+        apply_operator() {
+          return raw_validation_value;
+        },
       },
-    });
+      word_prefixes,
+    );
   } catch (error) {
     return interpreter_error_from(error);
   }
@@ -1594,10 +1926,17 @@ function evaluate_text(
   operators: OperatorRegistry,
   text: string,
   context: TokenizeContext,
-  options: InterpreterOptions,
-  prefixes: readonly string[] = ["-", "--"],
+  options: RuntimeInterpreterOptions,
+  word_prefixes: readonly string[] = [],
 ): unknown {
-  const tokens = tokenize_text(operators, text, context, options, true, prefixes);
+  const tokens = tokenize_text(
+    operators,
+    text,
+    context,
+    options,
+    true,
+    word_prefixes,
+  );
 
   return evaluate_tokens(tokens.tokens, options);
 }
@@ -1606,9 +1945,9 @@ function tokenize_text(
   operators: OperatorRegistry,
   text: string,
   context: TokenizeContext,
-  options: InterpreterOptions,
+  options: RuntimeInterpreterOptions,
   expecting_value: boolean,
-  prefixes: readonly string[] = ["-", "--"],
+  word_prefixes: readonly string[] = [],
   tokens: RuntimeToken[] = [],
 ): { readonly tokens: RuntimeToken[]; readonly expecting_value: boolean } {
   let index = 0;
@@ -1634,7 +1973,14 @@ function tokenize_text(
         continue;
       }
 
-      const value = read_value(operators, text, index, context, options, prefixes);
+      const value = read_value(
+        operators,
+        text,
+        index,
+        context,
+        options,
+        word_prefixes,
+      );
 
       if (value === undefined) {
         throw new TypeError(
@@ -1674,16 +2020,11 @@ function read_value(
   text: string,
   index: number,
   context: TokenizeContext,
-  options: InterpreterOptions,
-  prefixes: readonly string[] = ["-", "--"],
+  options: RuntimeInterpreterOptions,
+  word_prefixes: readonly string[] = [],
 ): { readonly value: unknown; readonly next: number } | undefined {
   if (text[index] === "?") {
     return read_reference(text, index, context);
-  }
-
-  const flag = read_flag(text, index, prefixes, context);
-  if (flag !== undefined) {
-    return flag;
   }
 
   const literal = read_literal(text, index);
@@ -1692,13 +2033,14 @@ function read_value(
     return literal;
   }
 
-  // Support for invoking functions from `values` with space-separated syntax.
-  // `greet "hello" "world" ?name` or `grep -i "foo" ?log`
-  // collects the following tokens and calls the function directly
-  // (e.g. "--find" and "hello" are passed as separate args).
-  // Bare names (no following tokens) return the function value itself.
-
-  const call = read_value_function_call(operators, text, index, context, options, prefixes);
+  const call = read_value_function_call(
+    operators,
+    text,
+    index,
+    context,
+    options,
+    word_prefixes,
+  );
   if (call !== undefined) {
     return call;
   }
@@ -1736,27 +2078,16 @@ function read_named_value(
 }
 
 /**
- * Support direct calls to functions registered in `values` using space-separated
- * syntax (for shell-like command usage).
- *
- * When a function name from `values` is followed by space-separated tokens
- * (until the next operator), those tokens are collected and the function is
- * called directly with them:
- *
- *   greet "hello" "world"     → greet("hello", "world")
- *   grep -i "error" ?log      → grep("-i", "error", <value>)
- *   mycmd --find=hello 42     → mycmd("--find", "hello", 42)
- *
- * This supports variadic functions naturally via rest parameters.
- * Bare names (no tokens after) return the function value itself.
+ * Call functions registered in `values` with following space-separated words.
+ * Bare names with no following words still evaluate to the function itself.
  */
 function read_value_function_call(
   operators: OperatorRegistry,
   text: string,
   index: number,
   context: TokenizeContext,
-  options: InterpreterOptions,
-  prefixes: readonly string[] = ["-", "--"],
+  options: RuntimeInterpreterOptions,
+  word_prefixes: readonly string[] = [],
 ): { readonly value: unknown; readonly next: number } | undefined {
   const ident = read_identifier(text, index);
   if (ident === undefined) {
@@ -1768,35 +2099,32 @@ function read_value_function_call(
     return undefined;
   }
 
-  // Collect following tokens after a function name from values. Stop at binary operators.
   const words: unknown[] = [];
   let next = ident.next;
 
   while (next < text.length) {
-    next = skip_whitespace(text, next);
-    if (next >= text.length) break;
+    const word_start = skip_whitespace(text, next);
+    if (word_start === next || word_start >= text.length) {
+      break;
+    }
+
+    next = word_start;
 
     if (read_operator(operators, text, next, 2, true) !== undefined) {
       break;
     }
 
-    const fl = read_flag(text, next, prefixes, context);
-    if (fl !== undefined) {
-      const f = fl.value;
-      if (f.value !== undefined) {
-        // attached form --name=value : pass as one token for simplicity
-        words.push(`${f.prefix}${f.name}=${f.value}`);
-      } else {
-        words.push(`${f.prefix}${f.name}`);
-      }
-      next = fl.next;
-      continue;
-    }
-
-    const atom = read_atomic_word_value(text, next, context, options, operators);
-    if (atom !== undefined) {
-      words.push(atom.value);
-      next = atom.next;
+    const word = read_word_value(
+      text,
+      next,
+      context,
+      options,
+      operators,
+      word_prefixes,
+    );
+    if (word !== undefined) {
+      words.push(word.value);
+      next = word.next;
       continue;
     }
 
@@ -1804,7 +2132,6 @@ function read_value_function_call(
   }
 
   if (words.length === 0) {
-    // bare name, let normal named_value return the fn itself (for use in pipelines etc.)
     return undefined;
   }
 
@@ -1812,24 +2139,24 @@ function read_value_function_call(
     return { value: raw_validation_value, next };
   }
 
-  // Pass the collected words directly as arguments to the function.
-  // This supports variadic / rest parameters naturally.
-  // Flag tokens like "--find" or "-v" are passed as their string form.
-  // Placeholders, literals, etc. are passed as their resolved values.
   const result = candidate(...words);
   return { value: result, next };
 }
 
-function read_atomic_word_value(
+function read_word_value(
   text: string,
   index: number,
   context: TokenizeContext,
-  options: InterpreterOptions,
+  options: RuntimeInterpreterOptions,
   operators: OperatorRegistry,
+  word_prefixes: readonly string[] = [],
 ): { readonly value: unknown; readonly next: number } | undefined {
   if (text[index] === "?") {
     return read_reference(text, index, context);
   }
+
+  const prefixed = read_prefixed_word(text, index, word_prefixes);
+  if (prefixed !== undefined) return prefixed;
 
   const lit = read_literal(text, index);
   if (lit !== undefined) return lit;
@@ -1837,7 +2164,6 @@ function read_atomic_word_value(
   const named = read_named_value(context.named_values, text, index);
   if (named !== undefined) return named;
 
-  // Unquoted shell word / arg (identifiers not registered are still valid words)
   const bare = read_identifier(text, index);
   if (bare !== undefined) {
     return { value: bare.name, next: bare.next };
@@ -1870,7 +2196,7 @@ function read_parenthesized_expression(
   text: string,
   index: number,
   context: TokenizeContext,
-  options: InterpreterOptions,
+  options: RuntimeInterpreterOptions,
 ): { readonly value: unknown; readonly next: number } | undefined {
   if (text[index] !== "(") {
     return undefined;
@@ -1891,7 +2217,13 @@ function read_parenthesized_expression(
   }
 
   return {
-    value: evaluate_text(operators, expression, context, options, context.prefixes),
+    value: evaluate_text(
+      operators,
+      expression,
+      context,
+      options,
+      context.word_prefixes,
+    ),
     next: close + 1,
   };
 }
@@ -2099,64 +2431,25 @@ function is_identifier_part(character: string | undefined): boolean {
   return character !== undefined && /^[A-Za-z0-9_$]$/.test(character);
 }
 
-function read_flag(
+function read_prefixed_word(
   text: string,
   index: number,
-  prefixes: readonly string[] = ["-", "--"],
-  context?: TokenizeContext,
-): { readonly value: Flag; readonly next: number } | undefined {
-  for (const p of prefixes) {
-    if (!text.startsWith(p, index)) continue;
-    const after = index + p.length;
-    // require letter or _ after prefix, not digit (to not steal -1 etc)
-    const m = /^([A-Za-z_][A-Za-z0-9_-]*)/.exec(text.slice(after));
-    if (m === null) continue;
+  word_prefixes: readonly string[] = [],
+): { readonly value: string; readonly next: number } | undefined {
+  for (const prefix of word_prefixes) {
+    if (prefix === "" || !text.startsWith(prefix, index)) continue;
 
-    const name = m[0];
-    let next = after + name.length;
+    const after_prefix = index + prefix.length;
+    const match = /^([A-Za-z_$][A-Za-z0-9_$-]*)/.exec(
+      text.slice(after_prefix),
+    );
 
-    let attached: unknown | undefined;
+    if (match === null) continue;
 
-    if (text[next] === "=") {
-      next += 1;
-      const afterEq = read_flag_attached_value(text, next, context);
-      if (afterEq !== undefined) {
-        attached = afterEq.value;
-        next = afterEq.next;
-      } else {
-        attached = "";
-      }
-    }
-
-    const flagValue: Flag = {
-      [flag_brand]: true,
-      prefix: p,
-      name,
-      ...(attached !== undefined ? { value: attached } : {}),
+    return {
+      value: prefix + match[0],
+      next: after_prefix + match[0].length,
     };
-
-    return { value: flagValue, next };
-  }
-
-  return undefined;
-}
-
-function read_flag_attached_value(
-  text: string,
-  index: number,
-  context?: TokenizeContext,
-): { readonly value: unknown; readonly next: number } | undefined {
-  const lit = read_literal(text, index);
-  if (lit !== undefined) return lit;
-
-  if (text[index] === "?" && context) {
-    return read_reference(text, index, context);
-  }
-
-  // Support bare word as string value for attached, e.g. --file=foo
-  const bare = read_identifier(text, index);
-  if (bare !== undefined) {
-    return { value: bare.name, next: bare.next };
   }
 
   return undefined;
@@ -2355,7 +2648,7 @@ function is_operator_symbol(character: string): boolean {
 
 function evaluate_tokens(
   tokens: readonly RuntimeToken[],
-  options: InterpreterOptions,
+  options: RuntimeInterpreterOptions,
 ): unknown {
   const values: unknown[] = [];
   const operators_stack: RuntimeOperator[] = [];
@@ -2435,7 +2728,7 @@ function should_apply_operator(
 function apply_operator_token(
   values: unknown[],
   operator: RuntimeOperator | undefined,
-  options: InterpreterOptions,
+  options: RuntimeInterpreterOptions,
 ): void {
   if (operator === undefined) {
     throw new TypeError("interpreter expression is missing an operator");
@@ -2469,7 +2762,7 @@ function apply_operator_token(
 function apply_operator_value(
   operator: RuntimeOperator,
   operands: readonly unknown[],
-  options: InterpreterOptions,
+  options: RuntimeInterpreterOptions,
 ): unknown {
   try {
     if (options.apply_operator !== undefined) {
@@ -2503,11 +2796,167 @@ function skip_whitespace(text: string, index: number): number {
   return next;
 }
 
+type WordReferenceScan = {
+  readonly next: number;
+  readonly has_reference: boolean;
+  readonly has_named_reference: boolean;
+};
+
+function scan_callable_words_for_references(
+  operators: OperatorRegistry,
+  named_values: ValueRegistry,
+  expression: string,
+  index: number,
+  word_prefixes: readonly string[],
+): WordReferenceScan {
+  let next = index;
+  let has_reference_value = false;
+  let has_named_reference_value = false;
+
+  while (next < expression.length) {
+    const word_start = skip_whitespace(expression, next);
+
+    if (word_start === next || word_start >= expression.length) {
+      break;
+    }
+
+    if (
+      read_operator(operators, expression, word_start, 2, true) !== undefined
+    ) {
+      break;
+    }
+
+    const word = read_word_reference_scan(
+      operators,
+      named_values,
+      expression,
+      word_start,
+      word_prefixes,
+    );
+
+    if (word === undefined) {
+      break;
+    }
+
+    has_reference_value ||= word.has_reference;
+    has_named_reference_value ||= word.has_named_reference;
+    next = word.next;
+  }
+
+  return {
+    next,
+    has_reference: has_reference_value,
+    has_named_reference: has_named_reference_value,
+  };
+}
+
+function read_word_reference_scan(
+  operators: OperatorRegistry,
+  named_values: ValueRegistry,
+  expression: string,
+  index: number,
+  word_prefixes: readonly string[],
+): WordReferenceScan | undefined {
+  const prefixed = read_prefixed_word(expression, index, word_prefixes);
+  if (prefixed !== undefined) {
+    return {
+      next: prefixed.next,
+      has_reference: false,
+      has_named_reference: false,
+    };
+  }
+
+  if (expression[index] === "?") {
+    const name = read_identifier(expression, index + 1);
+    if (name !== undefined) {
+      return {
+        next: name.next,
+        has_reference: true,
+        has_named_reference: true,
+      };
+    }
+
+    const indexed = read_indexed_reference(expression, index + 1);
+    return {
+      next: indexed?.next ?? index + 1,
+      has_reference: true,
+      has_named_reference: false,
+    };
+  }
+
+  const literal = read_literal(expression, index);
+  if (literal !== undefined) {
+    return {
+      next: literal.next,
+      has_reference: false,
+      has_named_reference: false,
+    };
+  }
+
+  const named_value = read_named_value(named_values, expression, index);
+  if (named_value !== undefined) {
+    return {
+      next: named_value.next,
+      has_reference: false,
+      has_named_reference: false,
+    };
+  }
+
+  const bare = read_identifier(expression, index);
+  if (bare !== undefined) {
+    return {
+      next: bare.next,
+      has_reference: false,
+      has_named_reference: false,
+    };
+  }
+
+  const operator_value = read_parenthesized_operator_value(
+    operators,
+    expression,
+    index,
+  );
+  if (operator_value !== undefined) {
+    return {
+      next: operator_value.next,
+      has_reference: false,
+      has_named_reference: false,
+    };
+  }
+
+  if (expression[index] !== "(") {
+    return undefined;
+  }
+
+  const close = find_closing_parenthesis(expression, index);
+  if (close === undefined) {
+    return undefined;
+  }
+
+  const nested = expression.slice(index + 1, close);
+
+  return {
+    next: close + 1,
+    has_reference: has_reference(
+      operators,
+      named_values,
+      nested,
+      word_prefixes,
+    ),
+    has_named_reference: has_named_reference(
+      operators,
+      named_values,
+      nested,
+      word_prefixes,
+    ),
+  };
+}
+
 function has_reference(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
-  prefixes: readonly string[] = ["-", "--"],
+  word_prefixes: readonly string[] = [],
 ): boolean {
   let index = 0;
   let expecting_value = true;
@@ -2524,13 +2973,6 @@ function has_reference(
 
       if (prefix !== undefined) {
         index = prefix.next;
-        continue;
-      }
-
-      const fl = read_flag(expression, index, prefixes);
-      if (fl !== undefined) {
-        index = fl.next;
-        expecting_value = false;
         continue;
       }
 
@@ -2551,38 +2993,19 @@ function has_reference(
       if (named_value !== undefined) {
         index = named_value.next;
         expecting_value = false;
-        // After a registered name, skip any following words (flags/args) so that
-        // shell syntax does not cause "expected operator" in has_ checks, and ? inside are found.
-        while (index < expression.length) {
-          const save = index;
-          index = skip_whitespace(expression, index);
-          if (index >= expression.length) { index=save; break; }
-          if (read_operator(operators, expression, index, 2, true) !== undefined) { index=save; break; }
-
-          const f = read_flag(expression, index, prefixes);
-          if (f !== undefined) {
-            index = f.next;
-            continue;
-          }
-          if (expression[index] === "?") {
+        if (typeof named_value.value === "function") {
+          const words = scan_callable_words_for_references(
+            operators,
+            named_values,
+            expression,
+            index,
+            word_prefixes,
+          );
+          if (words.has_reference) {
             return true;
           }
-          const lit = read_literal(expression, index);
-          if (lit !== undefined) { index = lit.next; continue; }
-          const nv = read_named_value(named_values, expression, index);
-          if (nv !== undefined) { index = nv.next; continue; }
-          const bare = read_identifier(expression, index);
-          if (bare !== undefined) { index = bare.next; continue; }
-          if (expression[index] === "(") {
-            const cl = find_closing_parenthesis(expression, index);
-            if (cl !== undefined) {
-              if (has_reference(operators, named_values, expression.slice(index+1, cl), prefixes)) return true;
-              index = cl + 1;
-              continue;
-            }
-          }
-          index = save;
-          break;
+
+          index = words.next;
         }
         continue;
       }
@@ -2611,6 +3034,7 @@ function has_reference(
             operators,
             named_values,
             expression.slice(index + 1, close),
+            word_prefixes,
           )
         ) {
           return true;
@@ -2641,7 +3065,7 @@ function has_named_reference(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
-  prefixes: readonly string[] = ["-", "--"],
+  word_prefixes: readonly string[] = [],
 ): boolean {
   let index = 0;
   let expecting_value = true;
@@ -2685,35 +3109,19 @@ function has_named_reference(
       if (named_value !== undefined) {
         index = named_value.next;
         expecting_value = false;
-        // skip following words after registered name, detecting named refs
-        while (index < expression.length) {
-          const save = index;
-          index = skip_whitespace(expression, index);
-          if (index >= expression.length) { index = save; break; }
-          if (read_operator(operators, expression, index, 2, true) !== undefined) { index=save; break; }
+        if (typeof named_value.value === "function") {
+          const words = scan_callable_words_for_references(
+            operators,
+            named_values,
+            expression,
+            index,
+            word_prefixes,
+          );
+          if (words.has_named_reference) {
+            return true;
+          }
 
-          const f = read_flag(expression, index, prefixes);
-          if (f !== undefined) { index = f.next; continue; }
-          if (expression[index] === "?") {
-            if (read_identifier(expression, index + 1) !== undefined) return true;
-            const ix = read_indexed_reference(expression, index + 1);
-            index = ix?.next ?? index + 1;
-            continue;
-          }
-          const lit = read_literal(expression, index);
-          if (lit !== undefined) { index = lit.next; continue; }
-          const nv = read_named_value(named_values, expression, index);
-          if (nv !== undefined) { index = nv.next; continue; }
-          const bare = read_identifier(expression, index);
-          if (bare !== undefined) { index = bare.next; continue; }
-          if (expression[index] === "(") {
-            const cl = find_closing_parenthesis(expression, index);
-            if (cl !== undefined) {
-              if (has_named_reference(operators, named_values, expression.slice(index+1, cl), prefixes)) return true;
-              index = cl + 1; continue;
-            }
-          }
-          index = save; break;
+          index = words.next;
         }
         continue;
       }
@@ -2742,6 +3150,7 @@ function has_named_reference(
             operators,
             named_values,
             expression.slice(index + 1, close),
+            word_prefixes,
           )
         ) {
           return true;

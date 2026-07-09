@@ -89,6 +89,51 @@ Deno.test("interpreter supports named values and functions", () => {
   );
 });
 
+Deno.test("interpreter passes configured prefixed words to callable values", () => {
+  const words = interpreter({}, {
+    word_prefixes: ["-", "--"] as const,
+    values: {
+      collect(...args: string[]): string[] {
+        return args;
+      },
+    },
+  });
+  const custom = interpreter({}, {
+    word_prefixes: ["@"] as const,
+    values: {
+      collect(...args: string[]): string[] {
+        return args;
+      },
+    },
+  });
+  const no_prefixes = interpreter({}, {
+    values: {
+      collect(...args: string[]): string[] {
+        return args;
+      },
+    },
+  });
+  const dynamic_expression: string = "collect -v";
+  const runner = words("collect -v ?");
+
+  assert_equals(words("collect alpha -v --version"), [
+    "alpha",
+    "-v",
+    "--version",
+  ]);
+  assert_equals(words("collect --version ?", "input"), [
+    "--version",
+    "input",
+  ]);
+  assert_equals(runner("input"), ["-v", "input"]);
+  assert_equals(custom("collect @draft alpha"), ["@draft", "alpha"]);
+  assert_type_error_message(
+    () => no_prefixes(dynamic_expression),
+    "expected a registered operator",
+    "word prefixes should be opt-in",
+  );
+});
+
 Deno.test("interpreter named placeholders read only own scope properties", () => {
   const scope = Object.create({ inherited: 41 }) as Record<string, unknown>;
   const null_scope = Object.create(null) as Record<string, unknown>;
@@ -1088,6 +1133,44 @@ const expect_interpreter_type_errors = () => {
   typed_arrays("stringify <$> ?", ["x"]);
   // @ts-expect-error Direct indexed calls use the inferred tuple positions.
   typed_arrays("?0 <$> ?1", (value) => String(value), ["x"]);
+  const word_calls = interpreter({}, {
+    word_prefixes: ["-", "--"] as const,
+    values: {
+      collect(...words: string[]): string[] {
+        return words;
+      },
+      count(...values: number[]): number {
+        return values.length;
+      },
+      pair(left: string, right: string): string {
+        return left + right;
+      },
+    },
+  });
+  const collected_words: string[] = word_calls("collect -v --version input");
+  const collected_runner = word_calls("collect -v ?");
+  const collected_runner_result: string[] = collected_runner("input");
+  const direct_collected_words: string[] = word_calls(
+    "collect --version ?",
+    "input",
+  );
+  const counted_words: number = word_calls("count 1 2");
+  const paired_words: string = word_calls("pair left right");
+  const no_word_prefixes = interpreter({}, {
+    values: {
+      collect(...words: string[]): string[] {
+        return words;
+      },
+    },
+  });
+  // @ts-expect-error Prefixed words require configured word prefixes.
+  no_word_prefixes("collect -v");
+  // @ts-expect-error Prefixed words are strings, not numbers.
+  word_calls("count -v");
+  // @ts-expect-error The placeholder is constrained by the string rest parameter.
+  collected_runner(1);
+  // @ts-expect-error Direct placeholders use the same string rest parameter.
+  word_calls("collect -v ?", 1);
   // @ts-expect-error The composed chain must match every operator boundary.
   broken_applicative("? <$> ? <*> ?");
   applicative_chain(
@@ -1115,6 +1198,11 @@ const expect_interpreter_type_errors = () => {
   void grouped_right_result;
   void grouped_left_result;
   void applicative_chain_result;
+  void collected_words;
+  void collected_runner_result;
+  void direct_collected_words;
+  void counted_words;
+  void paired_words;
   void question_runner;
 };
 

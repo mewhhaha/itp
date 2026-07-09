@@ -14,7 +14,7 @@ small nod to building your own raised little language on top of ordinary
 TypeScript.
 
 <p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/f/f7/Hallig_Hooge_2005.jpg" alt="Terp on the Hallig of Hooge" width="520">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Hallig_Hooge_2005.jpg/640px-Hallig_Hooge_2005.jpg" alt="Terp on the Hallig of Hooge" width="520">
 </p>
 
 <p align="center">
@@ -195,54 +195,36 @@ pipeline("greeting | trim | upper"); // "HELLO"
 pipeline("? | trim | upper", " hi "); // "HI"
 ```
 
-Functions placed in `values` can be invoked using simple shell-like syntax.
-The following tokens are passed directly as arguments to the function (this
-naturally supports variadic/rest parameters):
+Functions placed in `values` can also receive space-separated word arguments.
+This works naturally with rest parameters such as `(...words: string[])`. No
+word prefixes are enabled by default; opt in with `word_prefixes` when words may
+start with markers such as `-` or `--`.
 
 ```ts
 import { interpreter } from "jsr:@mewhhaha/terp";
 
 const tools = interpreter({}, {
+  word_prefixes: ["-", "--"] as const,
   values: {
-    grep: (...args: string[]) => {
-      const ignore_case = args.some(a => a === "-i" || a === "--ignore-case");
-      const pattern = args.find(a => !a.startsWith("-")) ?? "";
-      return (input: unknown) => /* filter ... */;
+    collect(...words: string[]): string[] {
+      return words;
     },
-    // Can also use specific parameters for typing
     greet: (name: string, title?: string) =>
       `hello ${title ? title + " " : ""}${name}`,
   },
 });
 
-tools("greet Alice");                    // calls greet("Alice")
-tools('greet "Alice" "Dr"');             // calls greet("Alice", "Dr")
-tools('grep -i "hello" ?text', "...");   // calls grep("-i", "hello", <text>)
+tools("collect alpha -v --version"); // ["alpha", "-v", "--version"]
+tools("collect -v ?", "input"); // ["-v", "input"]
+tools("greet Alice"); // "hello Alice"
+tools('greet "Alice" "Dr"'); // "hello Dr Alice"
 ```
 
-Prefixed tokens are passed as their full string form (e.g. `-i`, `--find`, `--output=dist` becomes two tokens or one depending on form).
+Bare names with no following words still return the value itself.
 
-This is a simple argv model. You can type your handler as `(...args: string[])` 
-or more precisely using literal types for known flags, e.g.:
-
-```ts
-type GrepArgs = 
-  | ["-i" | "--ignore-case", ...string[]] 
-  | [`--file=${string}`, ...string[]]
-  | string[];
-
-const grep = (...args: GrepArgs) => { ... };
-```
-
-See the updated [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts) for a
-larger example that mixes this style with pipelines. Bare names with no args
-still return the function itself.
-```
-
-A more useful DSL can look like a tiny shell. Commands can be registered as
-prefix operators (for the classic `cmd arg | next` style) or placed directly in
-`values` to support shell-like flag syntax such as `grep -i --context=2 "foo"`.
-See [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts) for both approaches.
+A more useful DSL can look like a tiny shell: prefix commands build pipeline
+steps, and `|` feeds each result into the next command. The complete version is
+in [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts).
 
 ```ts
 import {
@@ -497,18 +479,14 @@ directions, and non-callable `apply` hooks.
   `equality_operator`, `ordering_operator`, `boolean_operator`, and
   `boolean_unary_operator` create common operator definitions.
 - `standard_operators` exposes the default operator registry.
-- `Flag`, `is_flag`, `get_flag_name`, and `get_flag_value` are helpers for
-  working with prefixed tokens (like `-v` or `--foo`) when using space-separated
-  argument syntax for functions in `values`.
 
 See [docs/api.md](docs/api.md) for more detail.
 
 ## Examples
 
 The [examples](examples) folder contains small DSLs for pricing, shell-like
-pipelines (including direct function calls with flags/args), approval rules,
-JSON-driven metric calculations, feature flags, form validation, and
-applicative parser combinators. Run them all with:
+pipelines, approval rules, JSON-driven metric calculations, feature flags, form
+validation, and applicative parser combinators. Run them all with:
 
 ```sh
 deno task examples
