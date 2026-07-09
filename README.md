@@ -14,7 +14,7 @@ small nod to building your own raised little language on top of ordinary
 TypeScript.
 
 <p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Hallig_Hooge_2005.jpg/640px-Hallig_Hooge_2005.jpg" alt="Terp on the Hallig of Hooge" width="520">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/f/f7/Hallig_Hooge_2005.jpg" alt="Terp on the Hallig of Hooge" width="520">
 </p>
 
 <p align="center">
