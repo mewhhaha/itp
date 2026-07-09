@@ -1768,7 +1768,7 @@ function read_value_function_call(
     return undefined;
   }
 
-  // Collect words after the command name. Stop at binary operators so `cmd --f | next` works.
+  // Collect following tokens after a function name from values. Stop at binary operators.
   const words: unknown[] = [];
   let next = ident.next;
 
@@ -2108,7 +2108,7 @@ function read_flag(
   for (const p of prefixes) {
     if (!text.startsWith(p, index)) continue;
     const after = index + p.length;
-    // require letter or _ after prefix, not digit (to not steal -1 etc as flag)
+    // require letter or _ after prefix, not digit (to not steal -1 etc)
     const m = /^([A-Za-z_][A-Za-z0-9_-]*)/.exec(text.slice(after));
     if (m === null) continue;
 
@@ -2551,7 +2551,7 @@ function has_reference(
       if (named_value !== undefined) {
         index = named_value.next;
         expecting_value = false;
-        // After a registered name, skip any following command words (flags/args) so that
+        // After a registered name, skip any following words (flags/args) so that
         // shell syntax does not cause "expected operator" in has_ checks, and ? inside are found.
         while (index < expression.length) {
           const save = index;
@@ -2685,7 +2685,7 @@ function has_named_reference(
       if (named_value !== undefined) {
         index = named_value.next;
         expecting_value = false;
-        // skip command words after registered name, detecting named refs
+        // skip following words after registered name, detecting named refs
         while (index < expression.length) {
           const save = index;
           index = skip_whitespace(expression, index);
