@@ -479,13 +479,15 @@ type PositionalPlaceholder = {
   readonly __itp_placeholder: "positional";
 };
 
-/** Brand for flag values parsed from `--name` or `-x` (and `--name=val`) in command invocations. */
+/** Brand for prefixed tokens (e.g. -v, --foo) recognized in function argument lists. */
 const flag_brand: unique symbol = Symbol("terp.flag");
 
-export type Flag = {
+export type Flag<Name extends string = string> = {
   readonly [flag_brand]: true;
-  /** The flag name without leading dashes, e.g. "hello" for `--hello`, "v" for `-v`. */
-  readonly name: string;
+  /** The prefix used, e.g. "-" or "--" or custom like "@". */
+  readonly prefix: string;
+  /** The name after the prefix, e.g. "hello" for `--hello`, "v" for `-v`. */
+  readonly name: Name;
   /** Attached value for `--name=value` form; undefined for bare flags. */
   readonly value?: unknown;
 };
@@ -494,7 +496,11 @@ export function is_flag(value: unknown): value is Flag {
   return typeof value === "object" && value !== null && flag_brand in value;
 }
 
-export function get_flag_name(flag: Flag): string {
+export function get_flag_prefix(flag: Flag): string {
+  return flag.prefix;
+}
+
+export function get_flag_name<Name extends string>(flag: Flag<Name>): Name {
   return flag.name;
 }
 
@@ -823,7 +829,7 @@ type TypeEvaluateValue<
   : StringLiteral<Trim<operand>> extends true
     ? TypeEvaluation<string, readonly []>
   : Trim<operand> extends `--${string}` | `-${string}`
-    ? TypeEvaluation<Flag, readonly []>
+    ? TypeEvaluation<string, readonly []>
   : Trim<operand> extends ValueToken<values>
     ? TypeEvaluation<values[Trim<operand>], readonly []>
   : Trim<operand> extends `(${infer token})`
@@ -1140,6 +1146,11 @@ export interface InterpreterOptions<
   readonly apply_operator?: InterpreterApplyOperator;
   /** Named values that can be referenced directly from expressions. */
   readonly values?: values;
+  /** Prefix strings (e.g. "-", "--", "@") recognized when parsing words after
+   * a function name from `values`. Allows custom prefixes beyond CLI flags.
+   * Default: ["-", "--"]
+   */
+  readonly prefixes?: readonly string[];
 }
 
 /** Callable interpreter with its operator registry attached. */
@@ -1192,6 +1203,7 @@ export function interpreter<
   operator_registry(operators);
   const named_values = options.values ?? ({} as values);
   validate_value_registry(operators, named_values);
+  const prefixes = options.prefixes ?? ["-", "--"];
 
   const interpreter = ((expression: string, ...substitutions: unknown[]) => {
     return interpret_string_expression(
@@ -1200,6 +1212,7 @@ export function interpreter<
       expression,
       substitutions,
       options,
+      prefixes,
     );
   }) as unknown as Interpreter<operators, values>;
 
@@ -1311,6 +1324,7 @@ type TokenizeContext = {
   readonly values: readonly unknown[];
   readonly resolve_references: boolean;
   value_index: number;
+  prefixes?: readonly string[];
 };
 
 const raw_validation_value = Symbol("terp.raw.validation.value");
@@ -1363,10 +1377,11 @@ function interpret_string_expression(
   expression: string,
   substitutions: readonly unknown[],
   options: InterpreterOptions,
+  prefixes: readonly string[] = ["-", "--"],
 ): unknown {
   if (
     substitutions.length === 0 &&
-    has_reference(operators, named_values, expression)
+    has_reference(operators, named_values, expression, prefixes)
   ) {
     return (...values: readonly unknown[]) => {
       return evaluate_string_expression(
@@ -1375,6 +1390,7 @@ function interpret_string_expression(
         expression,
         values,
         options,
+        prefixes,
       );
     };
   }
@@ -1385,6 +1401,7 @@ function interpret_string_expression(
     expression,
     substitutions,
     options,
+    prefixes,
   );
 }
 
@@ -1394,11 +1411,13 @@ function evaluate_string_expression(
   expression: string,
   substitutions: readonly unknown[],
   options: InterpreterOptions,
+  prefixes: readonly string[] = ["-", "--"],
 ): unknown {
   const has_named_references = has_named_reference(
     operators,
     named_values,
     expression,
+    prefixes,
   );
   const scope = has_named_references ? substitutions[0] : undefined;
   const values = has_named_references ? substitutions.slice(1) : substitutions;
@@ -1407,10 +1426,11 @@ function evaluate_string_expression(
     scope,
     values,
     resolve_references: true,
+    prefixes,
     value_index: 0,
   };
 
-  const result = evaluate_text(operators, expression, context, options);
+  const result = evaluate_text(operators, expression, context, options, prefixes);
 
   if (context.value_index < values.length) {
     throw new TypeError("interpreter expression received too many values");
@@ -1575,8 +1595,9 @@ function evaluate_text(
   text: string,
   context: TokenizeContext,
   options: InterpreterOptions,
+  prefixes: readonly string[] = ["-", "--"],
 ): unknown {
-  const tokens = tokenize_text(operators, text, context, options, true);
+  const tokens = tokenize_text(operators, text, context, options, true, prefixes);
 
   return evaluate_tokens(tokens.tokens, options);
 }
@@ -1587,6 +1608,7 @@ function tokenize_text(
   context: TokenizeContext,
   options: InterpreterOptions,
   expecting_value: boolean,
+  prefixes: readonly string[] = ["-", "--"],
   tokens: RuntimeToken[] = [],
 ): { readonly tokens: RuntimeToken[]; readonly expecting_value: boolean } {
   let index = 0;
@@ -1612,7 +1634,7 @@ function tokenize_text(
         continue;
       }
 
-      const value = read_value(operators, text, index, context, options);
+      const value = read_value(operators, text, index, context, options, prefixes);
 
       if (value === undefined) {
         throw new TypeError(
@@ -1653,12 +1675,13 @@ function read_value(
   index: number,
   context: TokenizeContext,
   options: InterpreterOptions,
+  prefixes: readonly string[] = ["-", "--"],
 ): { readonly value: unknown; readonly next: number } | undefined {
   if (text[index] === "?") {
     return read_reference(text, index, context);
   }
 
-  const flag = read_flag(text, index, context);
+  const flag = read_flag(text, index, prefixes, context);
   if (flag !== undefined) {
     return flag;
   }
@@ -1669,13 +1692,15 @@ function read_value(
     return literal;
   }
 
-  // Support for invoking functions from `values` with shell-like syntax or direct arguments.
-  // - If flags are present (e.g. `cmd --verbose ?x`), the function receives a CommandInvocation.
-  // - Otherwise (e.g. `myfunc a ?`), it is called directly with the positional arguments.
-  // Bare function names (no following words) return the function itself (for pipelines).
-  const command = read_command_invocation(operators, text, index, context, options);
-  if (command !== undefined) {
-    return command;
+  // Support for invoking functions from `values` with space-separated syntax.
+  // `greet "hello" "world" ?name` or `grep -i "foo" ?log`
+  // collects the following tokens and calls the function directly
+  // (e.g. "--find" and "hello" are passed as separate args).
+  // Bare names (no following tokens) return the function value itself.
+
+  const call = read_value_function_call(operators, text, index, context, options, prefixes);
+  if (call !== undefined) {
+    return call;
   }
 
   const named_value = read_named_value(context.named_values, text, index);
@@ -1711,19 +1736,27 @@ function read_named_value(
 }
 
 /**
- * Support invoking functions from `values` using either:
- * - Shell/CLI style with flags: `cmd --flag value ?x`  → fn receives CommandInvocation
- * - Direct positional args: `myfunc a ?`               → fn("a", placeholder)
+ * Support direct calls to functions registered in `values` using space-separated
+ * syntax (for shell-like command usage).
  *
- * Only functions (not other values) trigger this.
- * If no following words, the bare function is returned (for use in pipelines etc).
+ * When a function name from `values` is followed by space-separated tokens
+ * (until the next operator), those tokens are collected and the function is
+ * called directly with them:
+ *
+ *   greet "hello" "world"     → greet("hello", "world")
+ *   grep -i "error" ?log      → grep("-i", "error", <value>)
+ *   mycmd --find=hello 42     → mycmd("--find", "hello", 42)
+ *
+ * This supports variadic functions naturally via rest parameters.
+ * Bare names (no tokens after) return the function value itself.
  */
-function read_command_invocation(
+function read_value_function_call(
   operators: OperatorRegistry,
   text: string,
   index: number,
   context: TokenizeContext,
   options: InterpreterOptions,
+  prefixes: readonly string[] = ["-", "--"],
 ): { readonly value: unknown; readonly next: number } | undefined {
   const ident = read_identifier(text, index);
   if (ident === undefined) {
@@ -1747,9 +1780,15 @@ function read_command_invocation(
       break;
     }
 
-    const fl = read_flag(text, next, context);
+    const fl = read_flag(text, next, prefixes, context);
     if (fl !== undefined) {
-      words.push(fl.value);
+      const f = fl.value;
+      if (f.value !== undefined) {
+        // attached form --name=value : pass as one token for simplicity
+        words.push(`${f.prefix}${f.name}=${f.value}`);
+      } else {
+        words.push(`${f.prefix}${f.name}`);
+      }
       next = fl.next;
       continue;
     }
@@ -1773,17 +1812,11 @@ function read_command_invocation(
     return { value: raw_validation_value, next };
   }
 
-  const invocation = create_command_invocation(ident.name, words);
-
-  let result;
-  if (Object.keys(invocation.flags).length > 0) {
-    // CLI-style with flags: pass the full record
-    result = candidate(invocation);
-  } else {
-    // Normal function call with direct positional arguments
-    result = candidate(...invocation.positionals);
-  }
-
+  // Pass the collected words directly as arguments to the function.
+  // This supports variadic / rest parameters naturally.
+  // Flag tokens like "--find" or "-v" are passed as their string form.
+  // Placeholders, literals, etc. are passed as their resolved values.
+  const result = candidate(...words);
   return { value: result, next };
 }
 
@@ -1812,31 +1845,6 @@ function read_atomic_word_value(
 
   return read_parenthesized_operator_value(operators, text, index) ??
     read_parenthesized_expression(operators, text, index, context, options);
-}
-
-export type CommandInvocation = {
-  readonly name: string;
-  readonly args: readonly unknown[];
-  readonly flags: Readonly<Record<string, unknown>>;
-  readonly positionals: readonly unknown[];
-};
-
-function create_command_invocation(name: string, words: readonly unknown[]): CommandInvocation {
-  const flags: Record<string, unknown> = Object.create(null);
-  const positionals: unknown[] = [];
-  const args: unknown[] = [];
-
-  for (const w of words) {
-    args.push(w);
-    if (is_flag(w)) {
-      const f = w as Flag;
-      flags[f.name] = f.value !== undefined ? f.value : true;
-    } else {
-      positionals.push(w);
-    }
-  }
-
-  return { name, args, flags, positionals };
 }
 
 function read_parenthesized_operator_value(
@@ -1883,7 +1891,7 @@ function read_parenthesized_expression(
   }
 
   return {
-    value: evaluate_text(operators, expression, context, options),
+    value: evaluate_text(operators, expression, context, options, context.prefixes),
     next: close + 1,
   };
 }
@@ -2094,38 +2102,43 @@ function is_identifier_part(character: string | undefined): boolean {
 function read_flag(
   text: string,
   index: number,
+  prefixes: readonly string[] = ["-", "--"],
   context?: TokenizeContext,
 ): { readonly value: Flag; readonly next: number } | undefined {
-  // Match - or -- followed by a name start (not digit, to not steal -3 etc)
-  const m = /^(-{1,2})([A-Za-z_][A-Za-z0-9_-]*)/.exec(text.slice(index));
-  if (m === null) {
-    return undefined;
-  }
+  for (const p of prefixes) {
+    if (!text.startsWith(p, index)) continue;
+    const after = index + p.length;
+    // require letter or _ after prefix, not digit (to not steal -1 etc as flag)
+    const m = /^([A-Za-z_][A-Za-z0-9_-]*)/.exec(text.slice(after));
+    if (m === null) continue;
 
-  const dashes = m[1];
-  const name = m[2];
-  let next = index + dashes.length + name.length;
+    const name = m[0];
+    let next = after + name.length;
 
-  let attached: unknown | undefined;
+    let attached: unknown | undefined;
 
-  if (text[next] === "=") {
-    next += 1;
-    const afterEq = read_flag_attached_value(text, next, context);
-    if (afterEq !== undefined) {
-      attached = afterEq.value;
-      next = afterEq.next;
-    } else {
-      attached = "";
+    if (text[next] === "=") {
+      next += 1;
+      const afterEq = read_flag_attached_value(text, next, context);
+      if (afterEq !== undefined) {
+        attached = afterEq.value;
+        next = afterEq.next;
+      } else {
+        attached = "";
+      }
     }
+
+    const flagValue: Flag = {
+      [flag_brand]: true,
+      prefix: p,
+      name,
+      ...(attached !== undefined ? { value: attached } : {}),
+    };
+
+    return { value: flagValue, next };
   }
 
-  const flagValue: Flag = {
-    [flag_brand]: true,
-    name,
-    ...(attached !== undefined ? { value: attached } : {}),
-  };
-
-  return { value: flagValue, next };
+  return undefined;
 }
 
 function read_flag_attached_value(
@@ -2138,6 +2151,12 @@ function read_flag_attached_value(
 
   if (text[index] === "?" && context) {
     return read_reference(text, index, context);
+  }
+
+  // Support bare word as string value for attached, e.g. --file=foo
+  const bare = read_identifier(text, index);
+  if (bare !== undefined) {
+    return { value: bare.name, next: bare.next };
   }
 
   return undefined;
@@ -2488,6 +2507,7 @@ function has_reference(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
+  prefixes: readonly string[] = ["-", "--"],
 ): boolean {
   let index = 0;
   let expecting_value = true;
@@ -2507,7 +2527,7 @@ function has_reference(
         continue;
       }
 
-      const fl = read_flag(expression, index);
+      const fl = read_flag(expression, index, prefixes);
       if (fl !== undefined) {
         index = fl.next;
         expecting_value = false;
@@ -2539,7 +2559,7 @@ function has_reference(
           if (index >= expression.length) { index=save; break; }
           if (read_operator(operators, expression, index, 2, true) !== undefined) { index=save; break; }
 
-          const f = read_flag(expression, index);
+          const f = read_flag(expression, index, prefixes);
           if (f !== undefined) {
             index = f.next;
             continue;
@@ -2556,7 +2576,7 @@ function has_reference(
           if (expression[index] === "(") {
             const cl = find_closing_parenthesis(expression, index);
             if (cl !== undefined) {
-              if (has_reference(operators, named_values, expression.slice(index+1, cl))) return true;
+              if (has_reference(operators, named_values, expression.slice(index+1, cl), prefixes)) return true;
               index = cl + 1;
               continue;
             }
@@ -2621,6 +2641,7 @@ function has_named_reference(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
+  prefixes: readonly string[] = ["-", "--"],
 ): boolean {
   let index = 0;
   let expecting_value = true;
@@ -2671,7 +2692,7 @@ function has_named_reference(
           if (index >= expression.length) { index = save; break; }
           if (read_operator(operators, expression, index, 2, true) !== undefined) { index=save; break; }
 
-          const f = read_flag(expression, index);
+          const f = read_flag(expression, index, prefixes);
           if (f !== undefined) { index = f.next; continue; }
           if (expression[index] === "?") {
             if (read_identifier(expression, index + 1) !== undefined) return true;
@@ -2688,7 +2709,7 @@ function has_named_reference(
           if (expression[index] === "(") {
             const cl = find_closing_parenthesis(expression, index);
             if (cl !== undefined) {
-              if (has_named_reference(operators, named_values, expression.slice(index+1, cl))) return true;
+              if (has_named_reference(operators, named_values, expression.slice(index+1, cl), prefixes)) return true;
               index = cl + 1; continue;
             }
           }

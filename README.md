@@ -195,51 +195,48 @@ pipeline("greeting | trim | upper"); // "HELLO"
 pipeline("? | trim | upper", " hi "); // "HI"
 ```
 
-Functions placed in `values` can be invoked directly with space-separated
-arguments and/or flags:
+Functions placed in `values` can be invoked using simple shell-like syntax.
+The following tokens are passed directly as arguments to the function (this
+naturally supports variadic/rest parameters):
 
 ```ts
-import { interpreter, type CommandInvocation } from "jsr:@mewhhaha/terp";
+import { interpreter } from "jsr:@mewhhaha/terp";
 
 const tools = interpreter({}, {
   values: {
-    // CLI-style command that receives a record when flags are used
-    grep: (inv: CommandInvocation) => {
-      const pattern = String(inv.positionals[0] ?? "");
-      const ignore_case = !!inv.flags.i || !!inv.flags["ignore-case"];
-      return (input: unknown) => /* filter using pattern and flags */;
+    grep: (...args: string[]) => {
+      const ignore_case = args.some(a => a === "-i" || a === "--ignore-case");
+      const pattern = args.find(a => !a.startsWith("-")) ?? "";
+      return (input: unknown) => /* filter ... */;
     },
-    // Normal function – called directly with positional arguments
-    greet: (name, title) => `hello ${title ? title + " " : ""}${name}`,
+    // Can also use specific parameters for typing
+    greet: (name: string, title?: string) =>
+      `hello ${title ? title + " " : ""}${name}`,
   },
 });
 
 tools("greet Alice");                    // calls greet("Alice")
-tools("greet Alice Dr");                 // calls greet("Alice", "Dr")
-tools('grep -i "hello" ?text', "...");   // calls grep with CommandInvocation
+tools('greet "Alice" "Dr"');             // calls greet("Alice", "Dr")
+tools('grep -i "hello" ?text', "...");   // calls grep("-i", "hello", <text>)
 ```
 
-- If the invocation contains any flags (`--foo`, `-x`, etc.), the function
-  receives a `CommandInvocation` record:
+Prefixed tokens are passed as their full string form (e.g. `-i`, `--find`, `--output=dist` becomes two tokens or one depending on form).
 
-  ```ts
-  {
-    name: string;
-    args: readonly unknown[];
-    flags: Record<string, unknown>;
-    positionals: readonly unknown[];
-  }
-  ```
+This is a simple argv model. You can type your handler as `(...args: string[])` 
+or more precisely using literal types for known flags, e.g.:
 
-- Otherwise it is called directly with the positional values (space-separated
-  arguments work naturally, and placeholders are supported).
+```ts
+type GrepArgs = 
+  | ["-i" | "--ignore-case", ...string[]] 
+  | [`--file=${string}`, ...string[]]
+  | string[];
 
-Use `is_flag`, `get_flag_name`, and `get_flag_value` to inspect raw `Flag`
-objects that appear in `args`. Bare function names with no arguments still
-return the function itself (for pipelines etc.).
+const grep = (...args: GrepArgs) => { ... };
+```
 
 See the updated [examples/bash_like_dsl.ts](examples/bash_like_dsl.ts) for a
-larger example that mixes this style with pipelines.
+larger example that mixes this style with pipelines. Bare names with no args
+still return the function itself.
 ```
 
 A more useful DSL can look like a tiny shell. Commands can be registered as
@@ -500,18 +497,18 @@ directions, and non-callable `apply` hooks.
   `equality_operator`, `ordering_operator`, `boolean_operator`, and
   `boolean_unary_operator` create common operator definitions.
 - `standard_operators` exposes the default operator registry.
-- `Flag` and `CommandInvocation` types plus `is_flag`, `get_flag_name`, and
-  `get_flag_value` support the direct command/flag syntax for functions in
-  `values`.
+- `Flag`, `is_flag`, `get_flag_name`, and `get_flag_value` are helpers for
+  working with prefixed tokens (like `-v` or `--foo`) when using space-separated
+  argument syntax for functions in `values`.
 
 See [docs/api.md](docs/api.md) for more detail.
 
 ## Examples
 
 The [examples](examples) folder contains small DSLs for pricing, shell-like
-pipelines (including direct command + flag syntax), approval rules, JSON-driven
-metric calculations, feature flags, form validation, and applicative parser
-combinators. Run them all with:
+pipelines (including direct function calls with flags/args), approval rules,
+JSON-driven metric calculations, feature flags, form validation, and
+applicative parser combinators. Run them all with:
 
 ```sh
 deno task examples

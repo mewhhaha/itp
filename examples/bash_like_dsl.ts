@@ -66,12 +66,13 @@ console.log("bash-like", {
   home_name: shell('env "HOME" | basename'),
 });
 
-// New: functions in `values` support direct space-separated calls and
-// shell-style flags. With flags present they receive a CommandInvocation
-// record; without flags they are called directly with the arguments.
-const cli_grep = (inv: import("../mod.ts").CommandInvocation) => {
-  const needle = String(inv.positionals[0] ?? "");
-  const ignore_case = !!inv.flags.i || !!inv.flags["ignore-case"];
+// New: functions in `values` can be invoked with shell-style space-separated
+// arguments. Prefixed tokens like "-i" or "--ignore-case" are passed as strings.
+// The function receives them directly as ...args (supports rest/variadic).
+const cli_grep = (...args: string[]) => {
+  const ignore_case = args.some(a => a === "-i" || a === "--ignore-case" || a === "i" || a === "ignore-case");
+  // The pattern is the first arg that doesn't look like a flag
+  const needle = args.find(a => !a.startsWith("-")) ?? "";
   return (input: unknown) =>
     as_lines(input).filter((line) =>
       ignore_case ? line.toLowerCase().includes(needle.toLowerCase()) : line.includes(needle),
