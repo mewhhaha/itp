@@ -135,8 +135,11 @@ Deno.test("interpreter passes configured prefixed words to callable values", () 
 });
 
 Deno.test("interpreter named placeholders read only own scope properties", () => {
-  const scope = Object.create({ inherited: 41 }) as Record<string, unknown>;
-  const null_scope = Object.create(null) as Record<string, unknown>;
+  const scope = Object.create({ inherited: 41 }) as {
+    own: number;
+    inherited: number;
+  };
+  const null_scope = Object.create(null) as { value: number };
 
   scope.own = 42;
   null_scope.value = 7;
@@ -149,7 +152,7 @@ Deno.test("interpreter named placeholders read only own scope properties", () =>
     "named placeholders should not resolve inherited scope properties",
   );
   assert_type_error_message(
-    () => terp("?constructor", {}),
+    () => terp("?constructor", {} as { constructor: unknown }),
     "scope is missing `constructor`",
     "named placeholders should not expose Object prototype properties",
   );
@@ -212,6 +215,19 @@ Deno.test("interpreter supports placeholders named references and runners", () =
   assert_equals(terp("?0 + ?left", { left: 22 }, 20), 42);
   assert_equals(terp("?left + ?", { left: 20 }, 22), 42);
   assert_equals(named_runner({ left: 20 }, 22), 42);
+});
+
+Deno.test("interpreter seats anonymous placeholders after the indexed block", () => {
+  assert_equals(terp("? + ?0", 10, 20), 30);
+  assert_equals(terp("? - ?1", 5, 10, 20), 10);
+  assert_equals(terp("?left + ? - ?0", { left: 1 }, 10, 20), 11);
+  assert_equals(assert_raw_runner(terp.raw("? + ?0"))(10, 20), 30);
+  assert_equals(assert_raw_runner(terp.raw("(? + ?0) * ?0"))(10, 2), 120);
+  assert_type_error_message(
+    () => assert_raw_runner(terp.raw("? + ?0"))(10),
+    "missing a value for placeholder `2`",
+    "anonymous placeholders after an indexed block should require the extra slot",
+  );
 });
 
 Deno.test("interpreter raw creates runners from dynamic expression strings", () => {
@@ -808,7 +824,7 @@ Deno.test("interpreter reports placeholder arity and preserves undefined values"
     "extra values after the highest indexed placeholder should be rejected",
   );
   assert_type_error_message(
-    () => terp("?missing", {}),
+    () => terp("?missing", {} as { missing: unknown }),
     "scope is missing `missing`",
     "missing named scope properties should identify the name",
   );
@@ -860,7 +876,8 @@ Deno.test("interpreter reports useful syntax and literal errors", () => {
     "empty expressions should be rejected",
   );
   assert_type_error_message(
-    () => terp("1 +"),
+    // Also rejected at the type level; the dynamic path checks the runtime.
+    () => evaluate_dynamic("1 +"),
     "missing a value",
     "trailing binary operators should be rejected",
   );
@@ -1185,6 +1202,44 @@ const expect_interpreter_type_errors = () => {
     // @ts-expect-error The last hole in the applicative chain is boolean[].
     ["x"],
   );
+  const concat_holes = terp("? ++ ?");
+  const concat_holes_result: string = concat_holes("a", "b");
+  const concat_indexed: string = terp("?0 ++ ?1", "a", "b");
+  const concat_named: string = terp("?a ++ ?b", { a: "x", b: "y" });
+  // @ts-expect-error Both `++` holes are strings, not numbers.
+  concat_holes(1, "b");
+  // @ts-expect-error Indexed `++` holes are strings, not numbers.
+  terp("?0 ++ ?1", 1, "b");
+  // @ts-expect-error Trailing binary operators are rejected as syntax.
+  terp("1 +");
+  const named_scope: number = terp("?left + ?right", { left: 1, right: 2 });
+  const named_scope_string: string = terp('?name ++ "!"', { name: "hi" });
+  const named_scope_runner = terp("?left + ?right * ?");
+  const named_scope_runner_result: number = named_scope_runner(
+    { left: 2, right: 3 },
+    4,
+  );
+  const named_with_indexed: number = terp("?left + ?0", { left: 20 }, 22);
+  // @ts-expect-error The scope must include every named placeholder.
+  terp("?left + ?right", { left: 1 });
+  // @ts-expect-error Named placeholders adopt the operator operand types.
+  terp("?left + 1", { left: "not a number" });
+  // @ts-expect-error Named placeholders adopt the string operand type.
+  terp('?name ++ "!"', { name: 1 });
+  named_scope_runner(
+    // @ts-expect-error Runner scopes are typed like direct call scopes.
+    { left: 2 },
+    4,
+  );
+  // @ts-expect-error Reusing one name for incompatible operands is rejected.
+  terp('(?value + 1) == (?value ++ "x")', { value: 1 });
+  void concat_holes_result;
+  void concat_indexed;
+  void concat_named;
+  void named_scope;
+  void named_scope_string;
+  void named_scope_runner_result;
+  void named_with_indexed;
   void numbers;
   void left_hole_result;
   void right_hole_result;

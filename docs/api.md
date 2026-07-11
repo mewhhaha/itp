@@ -54,9 +54,11 @@ add(1, 2); // 3
 terp("(+)") === terp.get("+"); // true
 ```
 
-Indexed placeholders are zero-based and can reuse the same value. They advance
-the positional placeholder cursor past the referenced index, so `?0 + ?` reads
-the first and second positional values.
+Indexed placeholders are zero-based and can reuse the same value. Positional `?`
+placeholders read the slots after the highest indexed placeholder, in order of
+appearance, so `?0 + ?` reads the first and second positional values and
+`? + ?0` reads the second and first. This matches the inferred argument tuple:
+indexed slots first, then one slot per positional placeholder.
 
 ## `interpreter`
 
@@ -107,6 +109,12 @@ calc.get_value("one"); // 1
 
 Named placeholders read only own properties from the scope object. Inherited
 prototype properties such as `constructor` are treated as missing.
+
+For literal expressions the scope parameter is typed from the named placeholders
+themselves: every referenced name becomes a required key, and each key adopts
+the operand type expected by the surrounding operator. In the example above the
+scope is typed `{ value: number }`, so a missing key or a non-number value is a
+compile-time error.
 
 Value names must be valid identifiers, cannot be `true` or `false`, and cannot
 conflict with an operator token.

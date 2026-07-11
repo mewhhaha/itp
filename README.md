@@ -101,12 +101,19 @@ terp("?left + ?right * ?", { left: 2, right: 3 }, 4); // 14
 Named placeholders only read own properties from the scope object. Prototype
 properties such as `constructor` are treated as missing.
 
+For literal expressions the scope object is fully typed: every named placeholder
+becomes a required key, and each key adopts the operand type expected by its
+operator. `terp("?left + ?right", { left: 2 })` is a compile-time error because
+`right` is missing, and so is passing a string for a numeric operand.
+
 Indexed placeholders read positional values by zero-based index and can reuse
-the same value:
+the same value. Positional `?` placeholders read the slots after the highest
+indexed placeholder, in order of appearance:
 
 ```ts
 terp("?0 + ?0", 21); // 42
 terp("?1 - ?0", 20, 62); // 42
+terp("? + ?0", 10, 20); // 30 (`?0` reads 10, `?` reads 20)
 ```
 
 Wrap a registered operator token in parentheses when you need the operator
