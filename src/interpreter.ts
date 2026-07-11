@@ -173,8 +173,8 @@ type OperatorBoundary<
   ? ContainsOperatorSymbol<operator> extends true
     ? EndsWithOperatorSymbol<left> extends true ? false
     : StartsWithOperatorSymbol<right> extends true
-      ? StartsWithUnaryOperator<operators, right> extends true ? true
-      : false
+      ? [StartsWithUnaryOperator<operators, right>] extends [never] ? false
+      : true
     : true
   : true
   : false;
@@ -484,10 +484,10 @@ type BinaryStringTailSyntax<
   word_prefixes extends readonly string[],
   left extends string,
   right extends string,
-> = ValueExpressionTailSyntax<operators, values, word_prefixes, left> extends
-  true
-  ? ValueExpressionTailSyntax<operators, values, word_prefixes, right> extends
-    true ? true
+> = [ValueExpressionTailSyntax<operators, values, word_prefixes, left>] extends
+  [true]
+  ? [ValueExpressionTailSyntax<operators, values, word_prefixes, right>] extends
+    [true] ? true
   : never
   : never;
 
@@ -498,10 +498,9 @@ type ValueExpressionTailSyntax<
   expression extends string,
 > = StringOperandSyntax<operators, values, word_prefixes, expression> extends
   true ? true
-  : BinaryStringSyntax<operators, values, word_prefixes, expression> extends
-    infer syntax ? [syntax] extends [never] ? never
-    : true
-  : never;
+  : [BinaryStringSyntax<operators, values, word_prefixes, expression>] extends
+    [never] ? false
+  : true;
 
 type StringSyntax<
   operators extends OperatorRegistry,
@@ -599,8 +598,13 @@ type PositionalPlaceholder = {
   readonly __itp_placeholder: "positional";
 };
 
-type NamedScopePlaceholderArg = {
+type NamedScopePlaceholderArg<
+  name extends string = string,
+  value = never,
+> = {
   readonly __itp_placeholder_arg: "scope";
+  readonly name: name;
+  readonly value: value;
 };
 
 type IndexedPlaceholderArg<
@@ -694,15 +698,48 @@ type ConstrainPlaceholderArgs<
     readonly index: infer index extends string;
   },
 ] ? readonly [IndexedPlaceholderArg<index, expected>]
+  : args extends readonly [
+    {
+      readonly __itp_placeholder_arg: "scope";
+      readonly name: infer name extends string;
+    },
+  ] ? readonly [NamedScopePlaceholderArg<name, expected>]
   : args extends readonly [unknown] ? readonly [expected]
   : args;
 
 type HasNamedScopeArg<args extends readonly unknown[]> = args extends readonly [
   infer head,
   ...infer tail,
-] ? head extends NamedScopePlaceholderArg ? true
+] ? head extends { readonly __itp_placeholder_arg: "scope" } ? true
   : HasNamedScopeArg<tail>
   : false;
+
+type NamedArgNames<args extends readonly unknown[]> = args extends readonly [
+  infer head,
+  ...infer tail,
+] ? head extends {
+    readonly __itp_placeholder_arg: "scope";
+    readonly name: infer name extends string;
+  } ? name | NamedArgNames<tail>
+  : NamedArgNames<tail>
+  : never;
+
+type NamedValueFor<
+  args extends readonly unknown[],
+  name extends string,
+  found extends readonly [unknown] | undefined = undefined,
+> = args extends readonly [infer head, ...infer tail] ? head extends {
+    readonly __itp_placeholder_arg: "scope";
+    readonly name: name;
+    readonly value: infer value;
+  } ? NamedValueFor<tail, name, MergePlaceholderValue<found, value>>
+  : NamedValueFor<tail, name, found>
+  : found extends readonly [infer result] ? result
+  : unknown;
+
+type NamedScopeArgs<args extends readonly unknown[]> = {
+  readonly [name in NamedArgNames<args>]: NamedValueFor<args, name>;
+};
 
 type HasIndexedArg<
   args extends readonly unknown[],
@@ -717,22 +754,22 @@ type HasIndexedArg<
 type IndexedValueFor<
   args extends readonly unknown[],
   index extends string,
-  found = never,
+  found extends readonly [unknown] | undefined = undefined,
 > = args extends readonly [infer head, ...infer tail] ? head extends {
     readonly __itp_placeholder_arg: "indexed";
     readonly index: index;
     readonly value: infer value;
-  } ? IndexedValueFor<
-      tail,
-      index,
-      MergeIndexedValue<found, [value] extends [never] ? unknown : value>
-    >
+  } ? IndexedValueFor<tail, index, MergePlaceholderValue<found, value>>
   : IndexedValueFor<tail, index, found>
-  : [found] extends [never] ? unknown
-  : found;
+  : found extends readonly [infer result] ? result
+  : unknown;
 
-type MergeIndexedValue<left, right> = [left] extends [never] ? right
-  : left & right;
+type MergePlaceholderValue<
+  found extends readonly [unknown] | undefined,
+  value,
+> = found extends readonly [infer current]
+  ? readonly [current & ([value] extends [never] ? unknown : value)]
+  : readonly [[value] extends [never] ? unknown : value];
 
 type IndexedArgs<args extends readonly unknown[]> = HasIndexedArg<
   args,
@@ -817,9 +854,9 @@ type IndexedArgs<args extends readonly unknown[]> = HasIndexedArg<
 type SequentialArgs<args extends readonly unknown[]> = args extends readonly [
   infer head,
   ...infer tail,
-] ? head extends
-    | NamedScopePlaceholderArg
-    | IndexedPlaceholderArg<string, unknown> ? SequentialArgs<tail>
+]
+  ? head extends { readonly __itp_placeholder_arg: "indexed" | "scope" }
+    ? SequentialArgs<tail>
   : readonly [head, ...SequentialArgs<tail>]
   : readonly [];
 
@@ -827,7 +864,7 @@ type NormalizePlaceholderArgs<
   args extends readonly unknown[],
 > = number extends args["length"] ? readonly unknown[]
   : HasNamedScopeArg<args> extends true ? readonly [
-      Record<string, unknown>,
+      NamedScopeArgs<args>,
       ...IndexedArgs<args>,
       ...SequentialArgs<args>,
     ]
@@ -1066,7 +1103,10 @@ type TypeEvaluateValue<
             readonly [IndexedPlaceholderArg<Trim<reference>>]
           >
         : TypeEvaluation<unknown, readonly unknown[]>
-      : TypeEvaluation<unknown, readonly [NamedScopePlaceholderArg]>
+      : TypeEvaluation<
+        PositionalPlaceholder,
+        readonly [NamedScopePlaceholderArg<Trim<reference>>]
+      >
     : TypeEvaluation<unknown, readonly unknown[]>
   : Trim<operand> extends `${number}` ? TypeEvaluation<number, readonly []>
   : Trim<operand> extends "true" | "false"
@@ -1235,10 +1275,10 @@ type TypeEvaluateBinaryTail<
   operator extends keyof operators & string,
   left extends string,
   right extends string,
-> = ValueExpressionTailSyntax<operators, values, word_prefixes, left> extends
-  true
-  ? ValueExpressionTailSyntax<operators, values, word_prefixes, right> extends
-    true ? TypeApplyBinary<
+> = [ValueExpressionTailSyntax<operators, values, word_prefixes, left>] extends
+  [true]
+  ? [ValueExpressionTailSyntax<operators, values, word_prefixes, right>] extends
+    [true] ? TypeApplyBinary<
       TypedOperatorDefinition<operators, operator, 2>,
       TypeEvaluateExpression<operators, values, word_prefixes, left>,
       TypeEvaluateExpression<operators, values, word_prefixes, right>
@@ -1253,10 +1293,10 @@ type TypeEvaluateBinaryLeftTail<
   operator extends keyof operators & string,
   left extends string,
   right extends string,
-> = ValueExpressionTailSyntax<operators, values, word_prefixes, left> extends
-  true
-  ? ValueExpressionTailSyntax<operators, values, word_prefixes, right> extends
-    true ? TypeApplyBinary<
+> = [ValueExpressionTailSyntax<operators, values, word_prefixes, left>] extends
+  [true]
+  ? [ValueExpressionTailSyntax<operators, values, word_prefixes, right>] extends
+    [true] ? TypeApplyBinary<
       TypedOperatorDefinition<operators, operator, 2>,
       TypeEvaluateExpression<operators, values, word_prefixes, left>,
       TypeEvaluateExpression<operators, values, word_prefixes, right>
@@ -1291,6 +1331,9 @@ type NormalizeExpressionType<value> = value extends PositionalPlaceholder
   ? unknown
   : value;
 
+type HasLiteralOperatorTokens<operators extends OperatorRegistry> =
+  string extends OperatorToken<operators> ? false : true;
+
 /** @internal */
 export type StringExpressionArgs<
   operators extends OperatorRegistry,
@@ -1298,6 +1341,7 @@ export type StringExpressionArgs<
   expression extends string,
   word_prefixes extends readonly string[] = readonly [],
 > = string extends expression ? readonly unknown[]
+  : HasLiteralOperatorTokens<operators> extends false ? readonly unknown[]
   : NormalizePlaceholderArgs<
     TypeEvaluationArgs<
       TypeEvaluateExpression<operators, values, word_prefixes, expression>
@@ -1316,6 +1360,7 @@ type StringCallResult<
   expression extends string,
   rest extends readonly unknown[],
 > = string extends expression ? unknown
+  : HasLiteralOperatorTokens<operators> extends false ? unknown
   : StringSyntax<operators, values, word_prefixes, expression> extends never
     ? StringSyntaxMessageFor<expression>
   : TypeEvaluateExpression<operators, values, word_prefixes, expression> extends
@@ -1351,6 +1396,7 @@ type DirectStringCallResult<
   word_prefixes extends readonly string[],
   expression extends string,
 > = string extends expression ? unknown
+  : HasLiteralOperatorTokens<operators> extends false ? unknown
   : StringSyntax<operators, values, word_prefixes, expression> extends never
     ? StringSyntaxMessageFor<expression>
   : TypeEvaluateExpression<operators, values, word_prefixes, expression> extends
@@ -1641,7 +1687,10 @@ type TokenizeContext = {
   readonly scope: unknown;
   readonly values: readonly unknown[];
   readonly resolve_references: boolean;
+  /** High-water mark of consumed positional slots. */
   value_index: number;
+  /** Next slot read by an anonymous `?`; starts after the indexed block. */
+  positional_index: number;
   readonly word_prefixes: readonly string[];
 };
 
@@ -1699,7 +1748,8 @@ function interpret_string_expression(
 ): unknown {
   if (
     substitutions.length === 0 &&
-    has_reference(operators, named_values, expression, word_prefixes)
+    scan_references(operators, named_values, expression, word_prefixes)
+      .has_reference
   ) {
     return (...values: readonly unknown[]) => {
       return evaluate_string_expression(
@@ -1731,14 +1781,16 @@ function evaluate_string_expression(
   options: RuntimeInterpreterOptions,
   word_prefixes: readonly string[] = [],
 ): unknown {
-  const has_named_references = has_named_reference(
+  const references = scan_references(
     operators,
     named_values,
     expression,
     word_prefixes,
   );
-  const scope = has_named_references ? substitutions[0] : undefined;
-  const values = has_named_references ? substitutions.slice(1) : substitutions;
+  const scope = references.has_named_reference ? substitutions[0] : undefined;
+  const values = references.has_named_reference
+    ? substitutions.slice(1)
+    : substitutions;
   const context: TokenizeContext = {
     named_values,
     scope,
@@ -1746,6 +1798,7 @@ function evaluate_string_expression(
     resolve_references: true,
     word_prefixes,
     value_index: 0,
+    positional_index: references.next_positional_index,
   };
 
   const result = evaluate_text(
@@ -1776,6 +1829,7 @@ function validate_raw_string_expression(
     resolve_references: false,
     word_prefixes,
     value_index: 0,
+    positional_index: 0,
   };
 
   try {
@@ -2262,20 +2316,28 @@ function read_reference(
 
   if (name === undefined) {
     if (!context.resolve_references) {
-      context.value_index += 1;
+      context.positional_index += 1;
+      context.value_index = Math.max(
+        context.value_index,
+        context.positional_index,
+      );
 
       return { value: raw_validation_value, next: index + 1 };
     }
 
-    if (context.value_index >= context.values.length) {
+    if (context.positional_index >= context.values.length) {
       throw new TypeError(
         "interpreter expression is missing a value for placeholder `" +
-          (context.value_index + 1) + "`",
+          (context.positional_index + 1) + "`",
       );
     }
 
-    const value = context.values[context.value_index];
-    context.value_index += 1;
+    const value = context.values[context.positional_index];
+    context.positional_index += 1;
+    context.value_index = Math.max(
+      context.value_index,
+      context.positional_index,
+    );
 
     return { value, next: index + 1 };
   }
@@ -2538,10 +2600,25 @@ function is_operator_overloads(entry: OperatorEntry): entry is readonly [
   return Array.isArray(entry);
 }
 
+const sorted_operator_tokens = new WeakMap<
+  OperatorRegistry,
+  readonly string[]
+>();
+
 function operator_tokens(operators: OperatorRegistry): readonly string[] {
-  return Object.keys(operators).sort((left, right) => {
+  const cached = sorted_operator_tokens.get(operators);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const tokens = Object.keys(operators).sort((left, right) => {
     return right.length - left.length;
   });
+
+  sorted_operator_tokens.set(operators, tokens);
+
+  return tokens;
 }
 
 function has_operator_boundary(
@@ -2796,22 +2873,176 @@ function skip_whitespace(text: string, index: number): number {
   return next;
 }
 
-type WordReferenceScan = {
-  readonly next: number;
-  readonly has_reference: boolean;
-  readonly has_named_reference: boolean;
+type ReferenceScan = {
+  has_reference: boolean;
+  has_named_reference: boolean;
+  /** One past the highest indexed placeholder; anonymous `?` reads here. */
+  next_positional_index: number;
 };
 
-function scan_callable_words_for_references(
+function scan_references(
+  operators: OperatorRegistry,
+  named_values: ValueRegistry,
+  expression: string,
+  word_prefixes: readonly string[] = [],
+): ReferenceScan {
+  const scan: ReferenceScan = {
+    has_reference: false,
+    has_named_reference: false,
+    next_positional_index: 0,
+  };
+
+  scan_expression_references(
+    operators,
+    named_values,
+    expression,
+    word_prefixes,
+    scan,
+  );
+
+  return scan;
+}
+
+function scan_expression_references(
+  operators: OperatorRegistry,
+  named_values: ValueRegistry,
+  expression: string,
+  word_prefixes: readonly string[],
+  scan: ReferenceScan,
+): void {
+  let index = 0;
+  let expecting_value = true;
+
+  while (index < expression.length) {
+    index = skip_whitespace(expression, index);
+
+    if (index >= expression.length) {
+      return;
+    }
+
+    if (expecting_value) {
+      const prefix = read_operator(operators, expression, index, 1, false);
+
+      if (prefix !== undefined) {
+        index = prefix.next;
+        continue;
+      }
+
+      if (expression[index] === "?") {
+        index = scan_reference_token(expression, index, scan);
+        expecting_value = false;
+        continue;
+      }
+
+      const literal = read_literal(expression, index);
+
+      if (literal !== undefined) {
+        index = literal.next;
+        expecting_value = false;
+        continue;
+      }
+
+      const named_value = read_named_value(named_values, expression, index);
+
+      if (named_value !== undefined) {
+        index = named_value.next;
+        expecting_value = false;
+        if (typeof named_value.value === "function") {
+          index = scan_callable_word_references(
+            operators,
+            named_values,
+            expression,
+            index,
+            word_prefixes,
+            scan,
+          );
+        }
+        continue;
+      }
+
+      const operator_value = read_parenthesized_operator_value(
+        operators,
+        expression,
+        index,
+      );
+
+      if (operator_value !== undefined) {
+        index = operator_value.next;
+        expecting_value = false;
+        continue;
+      }
+
+      if (expression[index] === "(") {
+        const close = find_closing_parenthesis(expression, index);
+
+        if (close === undefined) {
+          return;
+        }
+
+        scan_expression_references(
+          operators,
+          named_values,
+          expression.slice(index + 1, close),
+          word_prefixes,
+          scan,
+        );
+        index = close + 1;
+        expecting_value = false;
+        continue;
+      }
+
+      return;
+    }
+
+    const operator = read_operator(operators, expression, index, 2, true);
+
+    if (operator === undefined) {
+      return;
+    }
+
+    index = operator.next;
+    expecting_value = true;
+  }
+}
+
+function scan_reference_token(
+  expression: string,
+  index: number,
+  scan: ReferenceScan,
+): number {
+  scan.has_reference = true;
+
+  const name = read_identifier(expression, index + 1);
+
+  if (name !== undefined) {
+    scan.has_named_reference = true;
+
+    return name.next;
+  }
+
+  const indexed = read_indexed_reference(expression, index + 1);
+
+  if (indexed !== undefined) {
+    scan.next_positional_index = Math.max(
+      scan.next_positional_index,
+      indexed.index + 1,
+    );
+
+    return indexed.next;
+  }
+
+  return index + 1;
+}
+
+function scan_callable_word_references(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
   index: number,
   word_prefixes: readonly string[],
-): WordReferenceScan {
+  scan: ReferenceScan,
+): number {
   let next = index;
-  let has_reference_value = false;
-  let has_named_reference_value = false;
 
   while (next < expression.length) {
     const word_start = skip_whitespace(expression, next);
@@ -2826,89 +3057,55 @@ function scan_callable_words_for_references(
       break;
     }
 
-    const word = read_word_reference_scan(
+    const word_next = scan_word_reference(
       operators,
       named_values,
       expression,
       word_start,
       word_prefixes,
+      scan,
     );
 
-    if (word === undefined) {
+    if (word_next === undefined) {
       break;
     }
 
-    has_reference_value ||= word.has_reference;
-    has_named_reference_value ||= word.has_named_reference;
-    next = word.next;
+    next = word_next;
   }
 
-  return {
-    next,
-    has_reference: has_reference_value,
-    has_named_reference: has_named_reference_value,
-  };
+  return next;
 }
 
-function read_word_reference_scan(
+function scan_word_reference(
   operators: OperatorRegistry,
   named_values: ValueRegistry,
   expression: string,
   index: number,
   word_prefixes: readonly string[],
-): WordReferenceScan | undefined {
+  scan: ReferenceScan,
+): number | undefined {
   const prefixed = read_prefixed_word(expression, index, word_prefixes);
   if (prefixed !== undefined) {
-    return {
-      next: prefixed.next,
-      has_reference: false,
-      has_named_reference: false,
-    };
+    return prefixed.next;
   }
 
   if (expression[index] === "?") {
-    const name = read_identifier(expression, index + 1);
-    if (name !== undefined) {
-      return {
-        next: name.next,
-        has_reference: true,
-        has_named_reference: true,
-      };
-    }
-
-    const indexed = read_indexed_reference(expression, index + 1);
-    return {
-      next: indexed?.next ?? index + 1,
-      has_reference: true,
-      has_named_reference: false,
-    };
+    return scan_reference_token(expression, index, scan);
   }
 
   const literal = read_literal(expression, index);
   if (literal !== undefined) {
-    return {
-      next: literal.next,
-      has_reference: false,
-      has_named_reference: false,
-    };
+    return literal.next;
   }
 
   const named_value = read_named_value(named_values, expression, index);
   if (named_value !== undefined) {
-    return {
-      next: named_value.next,
-      has_reference: false,
-      has_named_reference: false,
-    };
+    return named_value.next;
   }
 
   const bare = read_identifier(expression, index);
   if (bare !== undefined) {
-    return {
-      next: bare.next,
-      has_reference: false,
-      has_named_reference: false,
-    };
+    return bare.next;
   }
 
   const operator_value = read_parenthesized_operator_value(
@@ -2917,11 +3114,7 @@ function read_word_reference_scan(
     index,
   );
   if (operator_value !== undefined) {
-    return {
-      next: operator_value.next,
-      has_reference: false,
-      has_named_reference: false,
-    };
+    return operator_value.next;
   }
 
   if (expression[index] !== "(") {
@@ -2933,248 +3126,15 @@ function read_word_reference_scan(
     return undefined;
   }
 
-  const nested = expression.slice(index + 1, close);
+  scan_expression_references(
+    operators,
+    named_values,
+    expression.slice(index + 1, close),
+    word_prefixes,
+    scan,
+  );
 
-  return {
-    next: close + 1,
-    has_reference: has_reference(
-      operators,
-      named_values,
-      nested,
-      word_prefixes,
-    ),
-    has_named_reference: has_named_reference(
-      operators,
-      named_values,
-      nested,
-      word_prefixes,
-    ),
-  };
-}
-
-function has_reference(
-  operators: OperatorRegistry,
-  named_values: ValueRegistry,
-  expression: string,
-  word_prefixes: readonly string[] = [],
-): boolean {
-  let index = 0;
-  let expecting_value = true;
-
-  while (index < expression.length) {
-    index = skip_whitespace(expression, index);
-
-    if (index >= expression.length) {
-      return false;
-    }
-
-    if (expecting_value) {
-      const prefix = read_operator(operators, expression, index, 1, false);
-
-      if (prefix !== undefined) {
-        index = prefix.next;
-        continue;
-      }
-
-      if (expression[index] === "?") {
-        return true;
-      }
-
-      const literal = read_literal(expression, index);
-
-      if (literal !== undefined) {
-        index = literal.next;
-        expecting_value = false;
-        continue;
-      }
-
-      const named_value = read_named_value(named_values, expression, index);
-
-      if (named_value !== undefined) {
-        index = named_value.next;
-        expecting_value = false;
-        if (typeof named_value.value === "function") {
-          const words = scan_callable_words_for_references(
-            operators,
-            named_values,
-            expression,
-            index,
-            word_prefixes,
-          );
-          if (words.has_reference) {
-            return true;
-          }
-
-          index = words.next;
-        }
-        continue;
-      }
-
-      const operator_value = read_parenthesized_operator_value(
-        operators,
-        expression,
-        index,
-      );
-
-      if (operator_value !== undefined) {
-        index = operator_value.next;
-        expecting_value = false;
-        continue;
-      }
-
-      if (expression[index] === "(") {
-        const close = find_closing_parenthesis(expression, index);
-
-        if (close === undefined) {
-          return false;
-        }
-
-        if (
-          has_reference(
-            operators,
-            named_values,
-            expression.slice(index + 1, close),
-            word_prefixes,
-          )
-        ) {
-          return true;
-        }
-
-        index = close + 1;
-        expecting_value = false;
-        continue;
-      }
-
-      return false;
-    }
-
-    const operator = read_operator(operators, expression, index, 2, true);
-
-    if (operator === undefined) {
-      return false;
-    }
-
-    index = operator.next;
-    expecting_value = true;
-  }
-
-  return false;
-}
-
-function has_named_reference(
-  operators: OperatorRegistry,
-  named_values: ValueRegistry,
-  expression: string,
-  word_prefixes: readonly string[] = [],
-): boolean {
-  let index = 0;
-  let expecting_value = true;
-
-  while (index < expression.length) {
-    index = skip_whitespace(expression, index);
-
-    if (index >= expression.length) {
-      return false;
-    }
-
-    if (expecting_value) {
-      const prefix = read_operator(operators, expression, index, 1, false);
-
-      if (prefix !== undefined) {
-        index = prefix.next;
-        continue;
-      }
-
-      if (expression[index] === "?") {
-        if (read_identifier(expression, index + 1) !== undefined) {
-          return true;
-        }
-
-        const indexed = read_indexed_reference(expression, index + 1);
-        index = indexed?.next ?? index + 1;
-        expecting_value = false;
-        continue;
-      }
-
-      const literal = read_literal(expression, index);
-
-      if (literal !== undefined) {
-        index = literal.next;
-        expecting_value = false;
-        continue;
-      }
-
-      const named_value = read_named_value(named_values, expression, index);
-
-      if (named_value !== undefined) {
-        index = named_value.next;
-        expecting_value = false;
-        if (typeof named_value.value === "function") {
-          const words = scan_callable_words_for_references(
-            operators,
-            named_values,
-            expression,
-            index,
-            word_prefixes,
-          );
-          if (words.has_named_reference) {
-            return true;
-          }
-
-          index = words.next;
-        }
-        continue;
-      }
-
-      const operator_value = read_parenthesized_operator_value(
-        operators,
-        expression,
-        index,
-      );
-
-      if (operator_value !== undefined) {
-        index = operator_value.next;
-        expecting_value = false;
-        continue;
-      }
-
-      if (expression[index] === "(") {
-        const close = find_closing_parenthesis(expression, index);
-
-        if (close === undefined) {
-          return false;
-        }
-
-        if (
-          has_named_reference(
-            operators,
-            named_values,
-            expression.slice(index + 1, close),
-            word_prefixes,
-          )
-        ) {
-          return true;
-        }
-
-        index = close + 1;
-        expecting_value = false;
-        continue;
-      }
-
-      return false;
-    }
-
-    const operator = read_operator(operators, expression, index, 2, true);
-
-    if (operator === undefined) {
-      return false;
-    }
-
-    index = operator.next;
-    expecting_value = true;
-  }
-
-  return false;
+  return close + 1;
 }
 
 function find_closing_parenthesis(

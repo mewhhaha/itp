@@ -4,6 +4,24 @@ All notable changes to this package will be documented in this file.
 
 ## Unreleased
 
+- Added typed named-placeholder scopes: literal expressions now infer the scope
+  object with one required key per named placeholder, each adopting the operand
+  type expected by its operator.
+- Fixed positional `?` placeholders colliding with indexed placeholder slots.
+  Positional placeholders now read the slots after the highest indexed
+  placeholder, matching the inferred argument tuple, so `? + ?0` works with two
+  values.
+- Fixed type-level placeholder inference degrading to `unknown[]` when a
+  registered operator token is a prefix of another (for example `+` and `++`).
+- Fixed the type level accepting expressions with empty operands, such as
+  trailing binary operators (`"1 +"`); these are now compile-time errors.
+- Fixed conflicting placeholder reuse across primitive operand types widening to
+  `unknown` instead of rejecting the value.
+- Registries typed as plain `Record<string, ...>` (no literal tokens) now skip
+  literal type checking instead of failing it.
+- Cached the sorted operator token list per registry to avoid re-sorting on
+  every token read.
+- Unified the internal reference scanners for placeholders and callable words.
 - Added typed operand and result generics to operator definitions.
 - Added typed placeholder arguments for literal expressions, indexed
   placeholders, and chains.
